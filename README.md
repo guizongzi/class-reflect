@@ -7,6 +7,8 @@
 - 真实问题与用户场景说明。
 - 对话式任务发起和快捷复盘目标。
 - 课堂视频上传、对象存储持久保存、播放器预览。
+- 首页视频库，展示当前教师已有视频、处理状态、转写数量，并支持删除课堂记录。
+- 视频上传时并行尝试在浏览器生成 ASR 音频并上传；失败时 worker 会回退到从视频抽取音频。
 - 带时间轴的 ASR 逐字稿入库。
 - 按时间、停顿和课堂活动边界聚合的大段课堂记录。
 - 大段课堂记录编辑并保存到后端。
@@ -83,7 +85,7 @@ LLM_MODEL=qwen-plus
 FRONTEND_ORIGIN=https://你的前端域名
 ```
 
-真实 ASR 流程：API 确认视频已进入 R2 后创建 `workflow_runs` 和 `workflow_step_runs`；如果前端或媒体任务已经通过 `/api/videos/{videoId}/audio-upload-url` 上传了独立音频，worker 会直接用该音频生成 ASR 临时读取 URL；如果没有独立音频，worker 才从 R2 读取视频，抽取 wav 音频后上传回 R2。随后 worker 提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。课堂记录中的每一行都会保留 `开始时间-结束时间`，长停顿会显示停顿提示。
+真实 ASR 流程：API 确认视频已进入 R2 后创建 `workflow_runs` 和 `workflow_step_runs`。前端会在视频上传同时尝试用浏览器 `AudioContext` 解码音轨，转成 16k 单声道 wav，并通过 `/api/videos/{videoId}/audio-upload-url` 上传独立音频；如果浏览器不支持、视频过大或解码失败，worker 会回退到从 R2 视频抽取音频。worker 拿到音频后生成 ASR 临时读取 URL，提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。课堂记录中的每一行都会保留 `开始时间-结束时间`，长停顿会显示停顿提示。
 
 4. 安装依赖并初始化数据库：
 

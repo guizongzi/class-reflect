@@ -1,6 +1,7 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import {
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -79,5 +80,17 @@ export async function uploadText(objectKey, content, mimeType = "text/plain;char
     Key: objectKey,
     Body: content,
     ContentType: mimeType
+  }));
+}
+
+export async function deleteObjects(objectKeys) {
+  const objects = Array.from(new Set(objectKeys.filter(Boolean))).map((Key) => ({ Key }));
+  if (!objects.length) return;
+  await s3.send(new DeleteObjectsCommand({
+    Bucket: config.r2.bucket,
+    Delete: {
+      Objects: objects,
+      Quiet: true
+    }
   }));
 }

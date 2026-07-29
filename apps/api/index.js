@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config, assertRuntimeConfig } from "./config.js";
 import { query, withTransaction } from "./db.js";
-import { assertObjectExists, audioObjectKey, createReadUrl, createUploadUrl, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
+import { assertObjectExists, audioObjectKey, createReadUrl, createUploadUrl, deleteObjects, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
 import { buildLessonSections, LESSON_ANALYSIS_STEPS } from "./processor.js";
 import { assertLessonOwner, getTeacherId } from "./auth.js";
 import { transcribeAudio } from "./asr.js";
@@ -17,7 +17,7 @@ const webDir = path.resolve(__dirname, "../web");
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", config.frontendOrigin);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-teacher-id");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   return next();
 });
@@ -76,6 +76,80 @@ app.post("/api/lessons", async (req, res, next) => {
       returning *
     `, [teacherId, course_title, lesson_title, grade, subject]);
     res.status(201).json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/lessons", async (req, res, next) => {
+  try {
+    const teacherId = await getTeacherId(req);
+    const result = await query(`
+      select
+        l.*,
+        v.id as video_id,
+        v.file_name,
+        v.file_size,
+        v.mime_type,
+        v.upload_status,
+        v.processing_status,
+        v.error_message,
+        v.audio_upload_status,
+        v.created_at as video_created_at,
+        coalesce(section_counts.section_count, 0) as section_count,
+        coalesce(segment_counts.segment_count, 0) as segment_count
+      from lessons l
+      left join lateral (
+        select *
+        from lesson_videos
+        where lesson_id = l.id
+        order by created_at desc
+        limit 1
+      ) v on true
+      left join lateral (
+        select count(*)::int as section_count
+        from lesson_sections
+        where lesson_id = l.id
+      ) section_counts on true
+      left join lateral (
+        select count(*)::int as segment_count
+        from transcript_segments
+        where lesson_id = l.id
+      ) segment_counts on true
+      where l.teacher_id = $1
+      order by l.updated_at desc, l.created_at desc
+    `, [teacherId]);
+    res.json({ lessons: result.rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/lessons/:lessonId", async (req, res, next) => {
+  try {
+    const teacherId = await getTeacherId(req);
+    const lesson = (await query("select * from lessons where id = $1", [req.params.lessonId])).rows[0];
+    if (!lesson) return res.status(404).json({ error: "lesson not found" });
+    assertLessonOwner(lesson, teacherId);
+
+    const videos = (await query(`
+      select object_key, audio_object_key
+      from lesson_videos
+      where lesson_id = $1
+    `, [lesson.id])).rows;
+    const reports = (await query(`
+      select export_object_key
+      from reports
+      where lesson_id = $1
+    `, [lesson.id])).rows;
+    const objectKeys = [
+      ...videos.flatMap((video) => [video.object_key, video.audio_object_key]),
+      ...reports.map((report) => report.export_object_key)
+    ];
+
+    await query("delete from lessons where id = $1 and teacher_id = $2", [lesson.id, teacherId]);
+    await deleteObjects(objectKeys);
+    res.json({ ok: true, deleted_lesson_id: lesson.id });
   } catch (error) {
     next(error);
   }
