@@ -100,6 +100,7 @@ create table if not exists reports (
   id uuid primary key default gen_random_uuid(),
   lesson_id uuid not null references lessons(id) on delete cascade,
   markdown_content text not null,
+  export_object_key text,
   generated_from jsonb not null,
   created_at timestamptz not null default now()
 );
