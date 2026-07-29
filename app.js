@@ -58,9 +58,18 @@ const sampleSegments = [
 ];
 
 const flowSteps = ["对话发起", "处理过程", "校订原文", "核对证据", "人工复核", "生成报告"];
-const processItems = ["视频上传完成", "音频抽取完成", "语音识别完成", "课堂分段完成", "AI分析完成", "报告草稿生成完成"];
+const processItems = [
+  { key: "upload", label: "视频上传完成" },
+  { key: "download_video", label: "后端读取视频" },
+  { key: "extract_audio", label: "音频抽取" },
+  { key: "upload_audio", label: "临时音频保存" },
+  { key: "asr", label: "语音识别" },
+  { key: "write_transcript", label: "课堂记录与证据生成" },
+  { key: "completed", label: "结果写入数据库" }
+];
 const storeKey = "classroom-review-mvp-v2";
 const apiBase = localStorage.getItem("classReflectApiBase") || "";
+let processingPollTimer = null;
 
 const state = loadState();
 
@@ -102,7 +111,13 @@ function loadState() {
     videoId: "",
     taskId: "",
     uploadProgress: 0,
-    backendMode: false
+    backendMode: false,
+    processingStatus: "idle",
+    taskProgress: 0,
+    taskStep: "",
+    backendError: "",
+    processSteps: [],
+    evidenceCards: []
   };
 
   try {
@@ -127,7 +142,13 @@ function persist() {
     videoId: state.videoId,
     taskId: state.taskId,
     uploadProgress: state.uploadProgress,
-    backendMode: state.backendMode
+    backendMode: state.backendMode,
+    processingStatus: state.processingStatus,
+    taskProgress: state.taskProgress,
+    taskStep: state.taskStep,
+    backendError: state.backendError,
+    processSteps: state.processSteps,
+    evidenceCards: state.evidenceCards
   }));
 }
 
@@ -192,8 +213,14 @@ function renderRecord() {
 
 function renderVideoMeta() {
   els.videoName.textContent = state.videoName ? "更换视频" : "上传课堂视频";
-  if (state.backendMode && state.uploadProgress > 0 && state.uploadProgress < 100) {
+  if (state.backendError) {
+    els.lessonTitle.textContent = `处理失败：${state.backendError}`;
+  } else if (state.backendMode && state.uploadProgress > 0 && state.uploadProgress < 100) {
     els.lessonTitle.textContent = `正在直传 Cloudflare R2：${state.uploadProgress}%`;
+  } else if (state.backendMode && state.processingStatus === "completed") {
+    els.lessonTitle.textContent = "分析完成，已读取真实课堂记录";
+  } else if (state.backendMode && ["queued", "running"].includes(state.processingStatus)) {
+    els.lessonTitle.textContent = `后端处理中：${taskStepLabel(state.taskStep)} ${state.taskProgress || 0}%`;
   } else if (state.backendMode && state.uploadProgress === 100) {
     els.lessonTitle.textContent = "视频已进入 Cloudflare R2，后端正在处理";
   } else {
@@ -244,30 +271,47 @@ function chip(label, active = false) {
 }
 
 function processCard() {
+  const statusByKey = new Map((state.processSteps || []).map((step) => [step.key, step.status]));
+  if (state.uploadProgress === 100 && !statusByKey.has("upload")) statusByKey.set("upload", "completed");
+  const statusText = {
+    idle: "等待上传",
+    uploading: `上传中 ${state.uploadProgress}%`,
+    queued: "已排队",
+    running: `处理中 ${state.taskProgress || 0}%`,
+    completed: "已完成",
+    failed: "失败"
+  }[state.processingStatus] || "等待上传";
+
   return `
     <div class="embedded-card">
       <strong>处理过程</strong>
+      <p style="color: var(--muted); margin: 8px 0 10px;">${statusText}${state.backendError ? `：${escapeHtml(state.backendError)}` : ""}</p>
       <div class="process-list">
-        ${processItems.map((item) => `<div class="process-item"><span class="check-dot">✓</span>${item}</div>`).join("")}
+        ${processItems.map((item) => processItem(item, statusByKey.get(item.key))).join("")}
       </div>
+      ${state.lessonId ? `<button class="finding-button" type="button" data-action="refreshStatus" style="margin-top: 12px;">刷新状态</button>` : ""}
     </div>
   `;
 }
 
 function evidenceCard(status) {
   const segment = selectedSegment();
+  const card = evidenceForSegment(segment);
+  const conclusion = card?.conclusion || "提问后学生思考时间不足（≤3秒）";
+  const quote = card?.quote_text || "教师：“每一份是它的几分之几？” 学生约 2.1 秒后回答，低于当前阈值 3 秒。依据来自语音转文字和时间戳。";
+  const cardCount = state.evidenceCards?.length || 4;
   return `
     <div class="embedded-card evidence-card">
       <div class="finding-title">
-        <span class="pill danger">证据片段 1/4</span>
+        <span class="pill danger">证据片段 1/${cardCount}</span>
         <span class="pill">时间段 ${segment.start}-${segment.end}</span>
         <span class="pill">${status}</span>
       </div>
       <div class="finding-title">
-        <strong>提问后学生思考时间不足（≤3秒）</strong>
+        <strong>${escapeHtml(conclusion)}</strong>
       </div>
       <div class="quote">
-        教师：“每一份是它的几分之几？” 学生约 2.1 秒后回答，低于当前阈值 3 秒。依据来自语音转文字和时间戳。
+        ${escapeHtml(quote)}
       </div>
       <div class="finding-actions">
         <button class="finding-button" type="button" data-action="seek">查看依据</button>
@@ -309,8 +353,13 @@ function bindConversationActions() {
 }
 
 function handleAction(action) {
+  if (action === "refreshStatus") {
+    refreshProcessingStatus();
+    return;
+  }
   if (action === "seek") {
-    selectSegment("seg-3", true);
+    const target = state.segments.find((segment) => segment.evidence) || selectedSegment();
+    selectSegment(target.id, true);
     state.currentStep = 4;
     state.lastAction = "已定位到语音证据对应时间点和课堂记录段落。";
   }
@@ -368,6 +417,15 @@ function updateCurrentRecord() {
 }
 
 async function uploadVideoThroughBackend(file) {
+  state.backendMode = true;
+  state.backendError = "";
+  state.processingStatus = "uploading";
+  state.taskProgress = 0;
+  state.taskStep = "upload";
+  state.processSteps = [];
+  persist();
+  renderAll();
+
   const lesson = await requestJson("/api/lessons", {
     method: "POST",
     body: JSON.stringify({
@@ -404,8 +462,12 @@ async function uploadVideoThroughBackend(file) {
   state.taskId = task.task_id;
   state.uploadProgress = 100;
   state.currentStep = 2;
+  state.processingStatus = task.status || "queued";
+  state.taskProgress = 0;
+  state.taskStep = "queued";
   persist();
   renderAll();
+  startProcessingPoll();
 }
 
 async function requestJson(path, options = {}) {
@@ -468,6 +530,99 @@ ${state.task}
   URL.revokeObjectURL(url);
 }
 
+function processItem(item, status = "waiting") {
+  const icon = status === "completed" ? "✓" : status === "running" ? "…" : status === "failed" ? "!" : "";
+  const muted = status === "waiting" ? " style=\"opacity: 0.55;\"" : "";
+  return `<div class="process-item"${muted}><span class="check-dot">${icon}</span>${item.label}</div>`;
+}
+
+function taskStepLabel(step) {
+  return processItems.find((item) => item.key === step)?.label || "准备处理";
+}
+
+function startProcessingPoll() {
+  window.clearInterval(processingPollTimer);
+  refreshProcessingStatus();
+  processingPollTimer = window.setInterval(refreshProcessingStatus, 3000);
+}
+
+async function refreshProcessingStatus() {
+  if (!state.lessonId) return;
+  try {
+    const status = await requestJson(`/api/lessons/${state.lessonId}/status`);
+    const task = status.task;
+    state.backendMode = true;
+    state.processSteps = status.steps || [];
+    if (task) {
+      state.processingStatus = task.status || "queued";
+      state.taskProgress = task.progress || 0;
+      state.taskStep = task.current_step || "";
+      state.backendError = task.error_message || "";
+    }
+
+    if (state.processingStatus === "completed") {
+      window.clearInterval(processingPollTimer);
+      await loadLessonResults();
+      state.currentStep = Math.max(state.currentStep, 4);
+    }
+
+    if (state.processingStatus === "failed") {
+      window.clearInterval(processingPollTimer);
+      state.backendError = state.backendError || "后台处理失败，请查看 Cloud Run 日志。";
+    }
+
+    persist();
+    renderAll();
+  } catch (error) {
+    state.backendError = error.message;
+    persist();
+    renderAll();
+  }
+}
+
+async function loadLessonResults() {
+  if (!state.lessonId) return;
+  const data = await requestJson(`/api/lessons/${state.lessonId}`);
+  if (data.playback_url && !els.classVideo.src) {
+    els.classVideo.src = data.playback_url;
+  }
+  const sections = data.sections || [];
+  const cards = data.evidence_cards || [];
+  state.evidenceCards = cards;
+  if (sections.length) {
+    state.segments = sections.map((section, index) => {
+      const card = cards.find((item) => item.section_id === section.id);
+      return {
+        id: section.id,
+        start: formatMs(section.start_ms),
+        end: formatMs(section.end_ms),
+        startSeconds: Math.round(section.start_ms / 1000),
+        endSeconds: Math.round(section.end_ms / 1000),
+        title: section.title || `课堂片段 ${index + 1}`,
+        zh: section.edited_summary_text || section.summary_text || "",
+        en: "",
+        tags: Array.isArray(section.tags) ? section.tags : [],
+        evidence: Boolean(card)
+      };
+    });
+    state.selectedSegmentId = state.segments.find((segment) => segment.evidence)?.id || state.segments[0].id;
+  }
+}
+
+function evidenceForSegment(segment) {
+  return (state.evidenceCards || []).find((card) => (
+    card.section_id === segment.id ||
+    (card.start_ms >= segment.startSeconds * 1000 && card.start_ms <= segment.endSeconds * 1000)
+  ));
+}
+
+function formatMs(ms) {
+  const totalSeconds = Math.max(0, Math.round((ms || 0) / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -505,10 +660,12 @@ els.videoInput.addEventListener("change", () => {
   persist();
   renderAll();
   uploadVideoThroughBackend(file).catch((error) => {
-    state.backendMode = false;
+    state.backendMode = true;
+    state.processingStatus = "failed";
+    state.backendError = error.message;
     state.uploadProgress = 0;
-    els.lessonTitle.textContent = `本地预览模式：${error.message}`;
     persist();
+    renderAll();
   });
 });
 
@@ -568,3 +725,6 @@ els.newAnalysis.addEventListener("click", () => {
 });
 
 renderAll();
+if (state.backendMode && state.lessonId && !["completed", "failed"].includes(state.processingStatus)) {
+  startProcessingPoll();
+}
