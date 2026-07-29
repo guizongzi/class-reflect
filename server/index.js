@@ -123,6 +123,43 @@ app.post("/api/videos/:videoId/complete-upload", async (req, res, next) => {
   }
 });
 
+app.post("/api/videos/:videoId/retry-processing", async (req, res, next) => {
+  try {
+    const videoResult = await query("select * from lesson_videos where id = $1", [req.params.videoId]);
+    const video = videoResult.rows[0];
+    if (!video) return res.status(404).json({ error: "video not found" });
+    const teacherId = await getTeacherId(req);
+    if (video.teacher_id !== teacherId) return res.status(403).json({ error: "无权访问该视频" });
+
+    await assertObjectExists(video.object_key);
+    const task = await withTransaction(async (client) => {
+      await client.query(`
+        update lesson_videos
+        set upload_status = 'uploaded', processing_status = 'queued', error_message = null, updated_at = now()
+        where id = $1
+      `, [video.id]);
+      await client.query("update lessons set status = 'processing', updated_at = now() where id = $1", [video.lesson_id]);
+      const previous = await client.query(`
+        select coalesce(max(retry_count), 0) as retry_count
+        from analysis_tasks
+        where video_id = $1
+      `, [video.id]);
+      const retryCount = Number(previous.rows[0]?.retry_count || 0) + 1;
+      const created = await client.query(`
+        insert into analysis_tasks (lesson_id, video_id, status, progress, current_step, retry_count)
+        values ($1, $2, 'queued', 0, 'queued', $3)
+        returning *
+      `, [video.lesson_id, video.id, retryCount]);
+      return created.rows[0];
+    });
+
+    enqueueVideoProcessing(task.id);
+    res.status(202).json({ task_id: task.id, status: task.status });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/lessons/:lessonId/status", async (req, res, next) => {
   try {
     const lesson = await query("select * from lessons where id = $1", [req.params.lessonId]);
