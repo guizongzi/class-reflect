@@ -3,6 +3,22 @@ const videoStage = document.querySelector("#videoStage");
 const videoInput = document.querySelector("#videoInput");
 
 if (uploadEmpty && videoStage && videoInput) {
+  const style = document.createElement("style");
+  style.textContent = `
+    #uploadEmpty { cursor: pointer; }
+    #uploadEmpty:focus-visible {
+      outline: 3px solid rgba(31, 138, 87, 0.45);
+      outline-offset: -6px;
+    }
+    #videoStage.is-dragging {
+      border: 2px dashed var(--accent, #1f8a57);
+    }
+    #videoStage.is-dragging #uploadEmpty {
+      background: rgba(31, 138, 87, 0.16);
+    }
+  `;
+  document.head.appendChild(style);
+
   uploadEmpty.addEventListener("click", () => {
     videoInput.click();
   });
