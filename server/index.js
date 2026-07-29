@@ -28,6 +28,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     service: "class-reflect",
+    app_revision_hint: "asr-phase-diagnostics-2026-07-29",
     asr_provider: config.asrProvider,
     asr_model: config.aliyun.asrModel,
     asr_base_url: config.aliyun.asrBaseUrl,
