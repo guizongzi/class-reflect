@@ -7,18 +7,21 @@ import {
   createLessonVideoRecord,
   deleteLessonRecord,
   getLessonRecord,
+  getTranslationTarget,
   getLessonVideoRecord,
   listLessonRecords,
   markLessonVideoAudioUploaded,
   markLessonVideoUploaded,
   setLessonVideoAudioObject,
-  updateLessonVideoObjectKey
+  updateLessonVideoObjectKey,
+  saveTranslationResult
 } from "@class-reflect/database";
 import {
   assertR2ObjectExists,
   createLessonAudioObjectKey,
   createLessonVideoObjectKey,
-  createR2UploadUrl
+  createR2UploadUrl,
+  createConfiguredTranslationProvider
 } from "@class-reflect/providers";
 
 const CreateVideoUploadSchema = z.object({
@@ -29,6 +32,14 @@ const CreateVideoUploadSchema = z.object({
 
 const CreateAudioUploadSchema = z.object({
   mimeType: z.string().min(1).default("audio/wav")
+});
+
+const TranslateTargetSchema = z.object({
+  targetType: z.enum(["section", "segment"]),
+  targetId: z.string().min(1),
+  sourceLanguage: z.string().default("en"),
+  targetLanguage: z.string().default("zh-CN"),
+  force: z.boolean().default(false)
 });
 
 @Injectable()
@@ -132,5 +143,38 @@ export class LessonsService {
     await assertR2ObjectExists(video.audioObjectKey);
     const updated = await markLessonVideoAudioUploaded(videoId);
     return { ok: true, video: updated };
+  }
+
+  async translateLessonText(lessonId: string, body: unknown) {
+    const lesson = await getLessonRecord(lessonId);
+    if (!lesson) throw new NotFoundException("lesson not found");
+
+    const input = TranslateTargetSchema.parse(body);
+    const target = await getTranslationTarget({
+      lessonId,
+      targetType: input.targetType,
+      targetId: input.targetId
+    });
+    if (!target) throw new NotFoundException("translation target not found");
+    if (!target.originalText.trim()) {
+      throw new Error("该段落没有可翻译的原文");
+    }
+    if (target.translatedText && !input.force) {
+      return { ok: true, translation: target, cached: true };
+    }
+
+    const provider = createConfiguredTranslationProvider();
+    const translatedText = await provider.translate({
+      text: target.originalText,
+      sourceLanguage: input.sourceLanguage,
+      targetLanguage: input.targetLanguage
+    });
+    const saved = await saveTranslationResult({
+      lessonId,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      translatedText
+    });
+    return { ok: true, translation: saved, cached: false };
   }
 }

@@ -18,7 +18,9 @@ const AppConfigSchema = z.object({
   aliyunAsrPollIntervalMs: z.number().default(3000),
   llmBaseUrl: z.string().optional(),
   llmApiKey: z.string().optional(),
-  llmModel: z.string().optional()
+  llmModel: z.string().optional(),
+  translationProvider: z.string().default("mymemory"),
+  myMemoryEmail: z.string().optional()
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -64,6 +66,12 @@ export function loadAppConfig(): AppConfig {
     ),
     llmBaseUrl: process.env.LLM_BASE_URL || raw.LLM_BASE_URL || raw.llm?.baseUrl,
     llmApiKey: process.env.LLM_API_KEY || raw.LLM_API_KEY || raw.llm?.apiKey,
-    llmModel: process.env.LLM_MODEL || raw.LLM_MODEL || raw.llm?.model
+    llmModel: process.env.LLM_MODEL || raw.LLM_MODEL || raw.llm?.model,
+    translationProvider:
+      process.env.TRANSLATION_PROVIDER ||
+      raw.TRANSLATION_PROVIDER ||
+      raw.translation?.provider ||
+      "mymemory",
+    myMemoryEmail: process.env.MYMEMORY_EMAIL || raw.MYMEMORY_EMAIL || raw.translation?.myMemoryEmail
   });
 }

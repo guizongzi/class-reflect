@@ -36,6 +36,29 @@ type WorkflowStatusResponse = {
   steps: WorkflowStepItem[];
 };
 
+type LessonTextItem = {
+  id: string;
+  targetType: "section" | "segment";
+  startMs: number;
+  endMs: number;
+  title: string;
+  originalText: string;
+  translatedText: string | null;
+};
+
+type LessonDetailResponse = {
+  sections?: Array<Record<string, unknown>>;
+  transcriptSegments?: Array<Record<string, unknown>>;
+};
+
+type TranslateResponse = {
+  translation?: {
+    id: string;
+    targetType: "section" | "segment";
+    translatedText: string | null;
+  } | null;
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const defaultLessonFormat: LessonFormat = "offline_classroom_recording";
 
@@ -52,6 +75,9 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatusResponse | null>(null);
   const [isWorkflowRefreshing, setIsWorkflowRefreshing] = useState(false);
+  const [lessonTexts, setLessonTexts] = useState<LessonTextItem[]>([]);
+  const [translatingId, setTranslatingId] = useState<string | null>(null);
+  const [translationError, setTranslationError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -67,6 +93,14 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   useEffect(() => {
     if (!activeLessonId) return;
     let cancelled = false;
+    async function loadLessonDetail() {
+      try {
+        const detail = await getJson<LessonDetailResponse>(`/api/lessons/${activeLessonId}`);
+        if (!cancelled) setLessonTexts(buildLessonTextItems(detail));
+      } catch {
+        if (!cancelled) setLessonTexts([]);
+      }
+    }
     async function loadWorkflowStatus() {
       setIsWorkflowRefreshing(true);
       try {
@@ -78,6 +112,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
         if (!cancelled) setIsWorkflowRefreshing(false);
       }
     }
+    void loadLessonDetail();
     void loadWorkflowStatus();
     const timer = window.setInterval(loadWorkflowStatus, 5000);
     return () => {
@@ -85,6 +120,29 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
       window.clearInterval(timer);
     };
   }, [activeLessonId]);
+
+  async function translateTextItem(item: LessonTextItem, force = false) {
+    if (!activeLessonId) return;
+    setTranslatingId(item.id);
+    setTranslationError(null);
+    try {
+      const result = await postJson<TranslateResponse>(`/api/lessons/${activeLessonId}/translate`, {
+        targetType: item.targetType,
+        targetId: item.id,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        force
+      });
+      const translatedText = result.translation?.translatedText || "";
+      setLessonTexts((items) => items.map((current) => (
+        current.id === item.id ? { ...current, translatedText } : current
+      )));
+    } catch (error) {
+      setTranslationError(error instanceof Error ? error.message : "翻译失败");
+    } finally {
+      setTranslatingId(null);
+    }
+  }
 
   async function handleFile(file: File) {
     if (!file.type.startsWith("video/")) {
@@ -230,10 +288,42 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
         </section>
 
         <section className="transcript-panel">
-          <h2>课堂记录</h2>
-          <textarea
-            defaultValue="ASR 完成后，这里显示带时间点的大段课堂记录。教师只需要修改有问题的段落，不需要逐句确认。"
-          />
+          <div className="panel-heading-row">
+            <h2>课堂记录</h2>
+            <span>{lessonTexts.length ? `${lessonTexts.length} 段` : "等待转写"}</span>
+          </div>
+          {translationError ? <div className="error-banner compact">{translationError}</div> : null}
+          <div className="transcript-list">
+            {lessonTexts.length ? lessonTexts.map((item) => (
+              <article className="transcript-item" key={item.id}>
+                <button
+                  className="transcript-body"
+                  onClick={() => void translateTextItem(item)}
+                  type="button"
+                >
+                  <div>
+                    <strong>{item.title}</strong>
+                    <span>{formatTimeRange(item.startMs, item.endMs)}</span>
+                  </div>
+                  <p>{item.originalText}</p>
+                  {item.translatedText ? <em>{item.translatedText}</em> : null}
+                </button>
+                <button
+                  className="ghost-button compact-button"
+                  disabled={translatingId === item.id}
+                  onClick={() => void translateTextItem(item, Boolean(item.translatedText))}
+                  type="button"
+                >
+                  {translatingId === item.id ? "翻译中" : item.translatedText ? "重新翻译" : "英译中"}
+                </button>
+              </article>
+            )) : (
+              <div className="empty-row">
+                <strong>暂无课堂记录</strong>
+                <span>ASR 写入逐字稿或大段记录后，这里可以点击段落触发翻译。</span>
+              </div>
+            )}
+          </div>
         </section>
       </section>
 
@@ -272,6 +362,32 @@ function ProgressItem({ label, progress }: { label: string; progress: number }) 
       <progress max={100} value={progress} />
     </div>
   );
+}
+
+function buildLessonTextItems(detail: LessonDetailResponse): LessonTextItem[] {
+  const sections = Array.isArray(detail.sections) ? detail.sections : [];
+  if (sections.length) {
+    return sections.map((section, index): LessonTextItem => ({
+      id: stringValue(section.id),
+      targetType: "section",
+      startMs: numberValue(section.start_ms ?? section.startMs),
+      endMs: numberValue(section.end_ms ?? section.endMs),
+      title: stringValue(section.title) || `课堂片段 ${index + 1}`,
+      originalText: stringValue(section.edited_summary_text ?? section.editedSummaryText ?? section.summary_text ?? section.summaryText),
+      translatedText: nullableString(section.translated_summary_text ?? section.translatedSummaryText)
+    })).filter((item) => item.id && item.originalText);
+  }
+
+  const segments = Array.isArray(detail.transcriptSegments) ? detail.transcriptSegments : [];
+  return segments.map((segment, index): LessonTextItem => ({
+    id: stringValue(segment.id),
+    targetType: "segment",
+    startMs: numberValue(segment.start_ms ?? segment.startMs),
+    endMs: numberValue(segment.end_ms ?? segment.endMs),
+    title: stringValue(segment.speaker_label ?? segment.speakerLabel) || `说话片段 ${index + 1}`,
+    originalText: stringValue(segment.original_text ?? segment.originalText),
+    translatedText: nullableString(segment.translated_text ?? segment.translatedText)
+  })).filter((item) => item.id && item.originalText);
 }
 
 async function createLessonFromFile(file: File, lessonFormat: LessonFormat) {
@@ -443,6 +559,31 @@ function formatWorkflowStepStatus(status: string, progress?: number | null) {
     skipped: "跳过",
     cancelled: "已取消"
   }[status] || status;
+}
+
+function formatTimeRange(startMs: number, endMs: number) {
+  return `${formatTimestamp(startMs)}-${formatTimestamp(endMs)}`;
+}
+
+function formatTimestamp(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
+  const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function nullableString(value: unknown) {
+  const text = stringValue(value).trim();
+  return text || null;
+}
+
+function numberValue(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 declare global {

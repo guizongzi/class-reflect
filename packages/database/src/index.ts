@@ -93,6 +93,14 @@ export type LessonDetailRecord = {
   reports: unknown[];
 };
 
+export type TranslationTargetRecord = {
+  targetType: "section" | "segment";
+  id: string;
+  lessonId: string;
+  originalText: string;
+  translatedText: string | null;
+};
+
 let pool: Pool | null = null;
 let lessonColumnCache: Set<string> | null = null;
 
@@ -298,6 +306,99 @@ export async function getLessonRecord(lessonId: string): Promise<LessonDetailRec
 export async function deleteLessonRecord(lessonId: string): Promise<boolean> {
   const result = await getPool().query("delete from lessons where id = $1", [lessonId]);
   return (result.rowCount || 0) > 0;
+}
+
+export async function getTranslationTarget(input: {
+  lessonId: string;
+  targetType: "section" | "segment";
+  targetId: string;
+}): Promise<TranslationTargetRecord | null> {
+  if (input.targetType === "section") {
+    const result = await getPool().query(`
+      select
+        id,
+        lesson_id,
+        coalesce(edited_summary_text, summary_text, '') as original_text,
+        to_jsonb(lesson_sections)->>'translated_summary_text' as translated_text
+      from lesson_sections
+      where lesson_id = $1 and id = $2
+    `, [input.lessonId, input.targetId]);
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      targetType: "section",
+      id: row.id,
+      lessonId: row.lesson_id,
+      originalText: row.original_text,
+      translatedText: row.translated_text
+    };
+  }
+
+  const result = await getPool().query(`
+    select
+      id,
+      lesson_id,
+      coalesce(raw_original_text, original_text, '') as original_text,
+      translated_text
+    from transcript_segments
+    where lesson_id = $1 and id = $2
+  `, [input.lessonId, input.targetId]);
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    targetType: "segment",
+    id: row.id,
+    lessonId: row.lesson_id,
+    originalText: row.original_text,
+    translatedText: row.translated_text
+  };
+}
+
+export async function saveTranslationResult(input: {
+  lessonId: string;
+  targetType: "section" | "segment";
+  targetId: string;
+  translatedText: string;
+}) {
+  if (input.targetType === "section") {
+    const result = await getPool().query(`
+      update lesson_sections
+      set translated_summary_text = $3, updated_at = now()
+      where lesson_id = $1 and id = $2
+      returning
+        id,
+        lesson_id,
+        coalesce(edited_summary_text, summary_text, '') as original_text,
+        translated_summary_text as translated_text
+    `, [input.lessonId, input.targetId, input.translatedText]);
+    const row = result.rows[0];
+    return row ? {
+      targetType: "section" as const,
+      id: row.id,
+      lessonId: row.lesson_id,
+      originalText: row.original_text,
+      translatedText: row.translated_text
+    } : null;
+  }
+
+  const result = await getPool().query(`
+    update transcript_segments
+    set translated_text = $3, raw_translated_text = coalesce(raw_translated_text, $3), updated_at = now()
+    where lesson_id = $1 and id = $2
+    returning
+      id,
+      lesson_id,
+      coalesce(raw_original_text, original_text, '') as original_text,
+      translated_text
+  `, [input.lessonId, input.targetId, input.translatedText]);
+  const row = result.rows[0];
+  return row ? {
+    targetType: "segment" as const,
+    id: row.id,
+    lessonId: row.lesson_id,
+    originalText: row.original_text,
+    translatedText: row.translated_text
+  } : null;
 }
 
 export type LessonVideoRecord = {

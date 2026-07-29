@@ -505,9 +505,11 @@ legacy/node-mvp
    - 保留原始 ASR，不覆盖唯一事实来源。
 
 8. 按需翻译
-   - `POST /api/lessons/:lessonId/translate`。
-   - 支持翻译单段、选中片段或全部英文片段。
-   - 翻译结果可编辑。
+   - 已完成：`POST /api/lessons/:lessonId/translate`。
+   - 已完成：前端点击段落触发英译中翻译。
+   - 已完成：翻译结果写回 `transcript_segments.translated_text` 或 `lesson_sections.translated_summary_text`。
+   - 已完成：Provider 支持 `mymemory`、`llm`、`mock`，默认 `mymemory`。
+   - 待补齐：选中片段翻译、全部英文片段批量翻译、译文人工编辑保存。
 
 9. 基础证据生成
    - `POST /api/lessons/:lessonId/analyze`。

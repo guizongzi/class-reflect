@@ -31,6 +31,11 @@ export class LessonsController {
     return this.lessons.createVideoUpload(lessonId, body);
   }
 
+  @Post(":lessonId/translate")
+  async translateLessonText(@Param("lessonId") lessonId: string, @Body() body: unknown) {
+    return this.lessons.translateLessonText(lessonId, body);
+  }
+
   @Post("videos/:videoId/complete-upload")
   async completeVideoUpload(@Param("videoId") videoId: string) {
     return this.lessons.completeVideoUpload(videoId);

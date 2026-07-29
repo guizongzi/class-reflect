@@ -12,4 +12,6 @@ export { createConfiguredAsrProvider } from "./asr/configured-asr";
 export { createAliyunAsrProvider } from "./asr/aliyun-asr";
 export { createMockAsrProvider } from "./asr/mock-asr";
 export { createConfiguredLlmProvider } from "./llm/openai-compatible-llm";
-export { createConfiguredTranslationProvider } from "./translation/llm-translation";
+export { createConfiguredTranslationProvider, createLlmTranslationProvider } from "./translation/llm-translation";
+export { createMyMemoryTranslationProvider } from "./translation/mymemory-translation";
+export { createMockTranslationProvider } from "./translation/mock-translation";
