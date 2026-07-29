@@ -53,7 +53,6 @@ export async function processVideoTask(taskId) {
 
     await updateTask(taskId, "running", 70, "write_transcript");
     const sections = buildLessonSections(transcriptSegments);
-    const evidenceCards = buildEvidenceCards({ task, transcriptSegments, sections });
 
     await withTransaction(async (client) => {
       await client.query("delete from transcript_segments where video_id = $1", [task.video_id]);
@@ -63,8 +62,9 @@ export async function processVideoTask(taskId) {
       for (const segment of transcriptSegments) {
         await client.query(`
           insert into transcript_segments
-            (lesson_id, video_id, start_ms, end_ms, speaker_label, original_text, translated_text, confidence)
-          values ($1, $2, $3, $4, $5, $6, $7, $8)
+            (lesson_id, video_id, start_ms, end_ms, speaker_label, original_text, raw_original_text,
+             translated_text, raw_translated_text, confidence)
+          values ($1, $2, $3, $4, $5, $6, $6, $7, $7, $8)
         `, [
           task.lesson_id,
           task.video_id,
@@ -77,13 +77,11 @@ export async function processVideoTask(taskId) {
         ]);
       }
 
-      const sectionIdByIndex = new Map();
-      for (const [index, section] of sections.entries()) {
-        const inserted = await client.query(`
+      for (const section of sections) {
+        await client.query(`
           insert into lesson_sections
             (lesson_id, video_id, start_ms, end_ms, title, summary_text, confidence_label, tags)
           values ($1, $2, $3, $4, $5, $6, $7, $8)
-          returning id
         `, [
           task.lesson_id,
           task.video_id,
@@ -93,29 +91,6 @@ export async function processVideoTask(taskId) {
           section.summaryText,
           section.confidenceLabel,
           JSON.stringify(section.tags)
-        ]);
-        sectionIdByIndex.set(index, inserted.rows[0].id);
-      }
-
-      for (const card of evidenceCards) {
-        await client.query(`
-          insert into evidence_cards
-            (lesson_id, video_id, task_id, section_id, evidence_type, conclusion, suggestion,
-             start_ms, end_ms, quote_text, confidence_label, source_model, raw_json)
-          values ($1, $2, $3, $4, 'transcript', $5, $6, $7, $8, $9, $10, $11, $12)
-        `, [
-          task.lesson_id,
-          task.video_id,
-          task.id,
-          sectionIdByIndex.get(card.sectionIndex),
-          card.conclusion,
-          card.suggestion,
-          card.startMs,
-          card.endMs,
-          card.quoteText,
-          card.confidenceLabel,
-          config.asrProvider,
-          JSON.stringify(card)
         ]);
       }
 
@@ -176,7 +151,7 @@ function extractAudio(videoPath, audioPath) {
   });
 }
 
-function buildLessonSections(transcriptSegments) {
+export function buildLessonSections(transcriptSegments) {
   if (!transcriptSegments.length) return [];
   const sections = [];
   let current = [];
@@ -262,7 +237,12 @@ function formatSectionTranscript(segments) {
 
 function formatParagraph(segments) {
   return segments
-    .map((segment) => `${segment.speakerLabel || "未知"}：${String(segment.originalText || "").trim()}`)
+    .map((segment, index) => {
+      const previous = segments[index - 1];
+      const gapMs = previous ? segment.startMs - previous.endMs : 0;
+      const pauseHint = gapMs >= 3000 ? ` 停顿${(gapMs / 1000).toFixed(1)}秒后` : "";
+      return `${msToClock(segment.startMs)}-${msToClock(segment.endMs)}${pauseHint} ${segment.speakerLabel || "未知"}：${String(segment.originalText || "").trim()}`;
+    })
     .join("\n");
 }
 
@@ -276,59 +256,6 @@ function inferSectionTags(text) {
   if (/练习|判断|作业/.test(text)) tags.push("练习");
   if (/讨论|同桌|小组/.test(text)) tags.push("互动");
   return tags;
-}
-
-function buildEvidenceCards({ transcriptSegments, sections }) {
-  const cards = [];
-  for (let i = 0; i < transcriptSegments.length - 1; i += 1) {
-    const current = transcriptSegments[i];
-    const next = transcriptSegments[i + 1];
-    const isQuestion = /[？?]|为什么|几分之几|想一想|请.*回答/.test(current.originalText);
-    const waitMs = next.startMs - current.endMs;
-    if (isQuestion && waitMs >= 0 && waitMs <= 3000) {
-      cards.push({
-        sectionIndex: findSectionIndex(sections, current.startMs),
-        conclusion: "提问后学生思考时间不足（≤3秒）",
-        suggestion: "关键问题后建议保留 3-5 秒安静思考时间，再邀请学生回答。",
-        startMs: current.startMs,
-        endMs: Math.max(next.endMs, current.endMs),
-        quoteText: buildEvidenceParagraph(transcriptSegments, i, {
-          note: `学生约 ${(waitMs / 1000).toFixed(1)} 秒后回应`
-        }),
-        confidenceLabel: "需要复核"
-      });
-    }
-  }
-
-  if (!cards.length && transcriptSegments.length) {
-    const first = transcriptSegments[0];
-    cards.push({
-      sectionIndex: 0,
-      conclusion: "已生成课堂原文，暂未发现高置信度风险片段",
-      suggestion: "建议教师先标记重点片段，再重新运行分析。",
-      startMs: first.startMs,
-      endMs: first.endMs,
-      quoteText: buildEvidenceParagraph(transcriptSegments, 0),
-      confidenceLabel: "证据不足"
-    });
-  }
-  return cards;
-}
-
-function buildEvidenceParagraph(transcriptSegments, focusIndex, options = {}) {
-  const start = Math.max(0, focusIndex - 1);
-  const end = Math.min(transcriptSegments.length, focusIndex + 3);
-  const lines = transcriptSegments.slice(start, end).map((segment, index) => {
-    const marker = start + index === focusIndex ? "重点" : "上下文";
-    return `${marker} ${msToClock(segment.startMs)}-${msToClock(segment.endMs)} ${segment.speakerLabel || "未知"}：${String(segment.originalText || "").trim()}`;
-  });
-  if (options.note) lines.push(`判断依据：${options.note}`);
-  return lines.join("\n");
-}
-
-function findSectionIndex(sections, startMs) {
-  const index = sections.findIndex((section) => startMs >= section.startMs && startMs <= section.endMs);
-  return index === -1 ? 0 : index;
 }
 
 function msToClock(ms) {
