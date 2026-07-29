@@ -22,7 +22,7 @@
 
 ## 模拟与真实后端
 
-前端仍保留 localStorage 演示数据，方便没有后端环境时预览界面。接入后端后，视频会先直传 Cloudflare R2，Supabase PostgreSQL 只保存文件归属、对象地址、workflow 状态、逐字稿、课堂分段和校订结果。API 只负责创建上传凭证、确认上传和创建 workflow；音频抽取、ASR 和写库由独立 worker / Cloud Run Job 消费队列完成。
+前端仍保留 localStorage 演示数据，方便没有后端环境时预览界面。接入后端后，视频会先直传 Cloudflare R2，Supabase PostgreSQL 只保存文件归属、对象地址、可选音频对象、workflow 状态、逐字稿、课堂分段和校订结果。API 只负责创建上传凭证、确认上传和创建 workflow；音频抽取、ASR 和写库由独立 worker / Cloud Run Job 消费队列完成。
 
 ## 平台分工
 
@@ -83,7 +83,7 @@ LLM_MODEL=qwen-plus
 FRONTEND_ORIGIN=https://你的前端域名
 ```
 
-真实 ASR 流程：API 确认视频已进入 R2 后创建 `workflow_runs` 和 `workflow_step_runs`；worker 认领 queued workflow，从 R2 读取视频，抽取 wav 音频后上传回 R2，生成临时读取 URL，提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。课堂记录中的每一行都会保留 `开始时间-结束时间`，长停顿会显示停顿提示。
+真实 ASR 流程：API 确认视频已进入 R2 后创建 `workflow_runs` 和 `workflow_step_runs`；如果前端或媒体任务已经通过 `/api/videos/{videoId}/audio-upload-url` 上传了独立音频，worker 会直接用该音频生成 ASR 临时读取 URL；如果没有独立音频，worker 才从 R2 读取视频，抽取 wav 音频后上传回 R2。随后 worker 提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。课堂记录中的每一行都会保留 `开始时间-结束时间`，长停顿会显示停顿提示。
 
 4. 安装依赖并初始化数据库：
 
