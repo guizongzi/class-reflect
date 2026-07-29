@@ -22,6 +22,7 @@ export const config = {
   },
   asrProvider: process.env.ASR_PROVIDER || "mock",
   aliyun: {
+    asrModel: process.env.ALIYUN_ASR_MODEL || "qwen3-asr-flash-filetrans",
     asrAppKey: process.env.ALIYUN_ASR_APP_KEY,
     accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID,
     accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET
