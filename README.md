@@ -100,6 +100,60 @@ localStorage.setItem("classReflectApiBase", "https://你的后端域名")
 
 然后刷新页面。
 
+## Google Cloud 上线步骤
+
+第一版建议先把 API 和前端一起部署到 Cloud Run。视频处理暂时在 API 服务内异步执行，Cloud Run 需要配置较长 timeout；后续再拆成 Cloud Run Jobs。
+
+1. 在 Google Cloud 创建项目，并启用：
+
+```bash
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com
+```
+
+2. 创建 Artifact Registry：
+
+```bash
+gcloud artifacts repositories create class-reflect \
+  --repository-format=docker \
+  --location=asia-southeast1
+```
+
+3. 在 Secret Manager 创建密钥：
+
+```text
+DATABASE_URL
+DIRECT_URL
+SUPABASE_URL
+SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY
+R2_ACCOUNT_ID
+R2_ENDPOINT
+R2_BUCKET
+R2_ACCESS_KEY_ID
+R2_SECRET_ACCESS_KEY
+ALIYUN_DASHSCOPE_API_KEY
+LLM_BASE_URL
+LLM_API_KEY
+LLM_MODEL
+FRONTEND_ORIGIN
+```
+
+4. 用 Cloud Build 构建和部署：
+
+```bash
+gcloud builds submit --config cloudbuild.yaml
+```
+
+5. 部署后在 Cloud Run 的 Variables & Secrets 里把上面的 Secret 逐个绑定为环境变量。
+
+6. 打开健康检查：
+
+```text
+https://你的-cloud-run-url/api/health
+```
+
+返回 `ok: true` 后，再初始化数据库并测试上传链路。
+
 ## GitHub Pages 部署
 
 1. 将本仓库推送到 GitHub。
