@@ -102,9 +102,10 @@ export function LessonLibrary() {
           ) : null}
           {!isLoading && !hasLessons ? (
             <div className="empty-row">
-            <strong>暂无课堂视频</strong>
-            <span>上传第一节课后会显示在这里。</span>
-          </div>
+              <strong>暂无课堂视频</strong>
+              <span>上传第一节课后会显示在这里。</span>
+              <Link className="primary-button inline-action" href="/lessons/new">上传新视频</Link>
+            </div>
           ) : null}
           {!isLoading && hasLessons ? lessons.map((lesson) => (
             <LessonRow

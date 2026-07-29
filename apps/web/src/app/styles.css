@@ -78,6 +78,11 @@ a {
   color: #b42318;
 }
 
+.inline-action {
+  justify-self: start;
+  margin-top: 8px;
+}
+
 .library-panel {
   margin: 32px auto;
   max-width: 1120px;
@@ -260,6 +265,24 @@ a {
   flex-direction: column;
   justify-content: center;
   gap: 8px;
+}
+
+.video-placeholder small {
+  color: #667085;
+  font-size: 13px;
+}
+
+.file-picker-button {
+  margin-top: 8px;
+  position: relative;
+}
+
+.file-picker-button input {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
 }
 
 .format-grid {

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { lessonFormatOptions } from "@class-reflect/shared-types";
 
 type Props = {
@@ -15,13 +16,21 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
             <strong>AI课堂回放与教学分析</strong>
             <span>{lessonId ? `课堂 ${lessonId}` : "新建课堂复盘"}</span>
           </div>
-          <a className="ghost-button" href="/lessons">视频库</a>
+          <div className="topbar-actions">
+            <Link className="ghost-button" href="/lessons">视频库</Link>
+            {lessonId ? <Link className="primary-button" href="/lessons/new">上传新视频</Link> : null}
+          </div>
         </header>
 
         <section className="video-panel">
           <div className="video-placeholder">
             <strong>拖入或选择课堂视频</strong>
             <span>视频将直传对象存储，API 只保存对象地址和处理状态。</span>
+            <label className="primary-button file-picker-button">
+              选择课堂视频
+              <input accept="video/*" type="file" />
+            </label>
+            <small>当前入口已开放，下一步接入 R2 预签名上传和真实进度。</small>
           </div>
         </section>
 
