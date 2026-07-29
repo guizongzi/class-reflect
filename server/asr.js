@@ -17,12 +17,13 @@ async function transcribeWithAliyun(audioUrl) {
 
   const taskId = await submitAliyunTranscriptionTask(audioUrl);
   const resultUrl = await waitForAliyunTranscription(taskId);
-  const result = await requestJson(resultUrl, { auth: false });
+  const result = await requestJson(resultUrl, { auth: false, phase: "result" });
   return parseAliyunTranscriptionResult(result);
 }
 
 async function submitAliyunTranscriptionTask(audioUrl) {
   const response = await requestJson(`${trimTrailingSlash(config.aliyun.asrBaseUrl)}/services/audio/asr/transcription`, {
+    phase: "submit",
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.aliyun.dashscopeApiKey}`,
@@ -50,6 +51,7 @@ async function waitForAliyunTranscription(taskId) {
   const deadline = Date.now() + config.aliyun.asrTimeoutMs;
   while (Date.now() < deadline) {
     const response = await requestJson(`${trimTrailingSlash(config.aliyun.asrBaseUrl)}/tasks/${taskId}`, {
+      phase: "poll",
       headers: {
         Authorization: `Bearer ${config.aliyun.dashscopeApiKey}`,
         "Content-Type": "application/json"
@@ -70,7 +72,7 @@ async function waitForAliyunTranscription(taskId) {
 }
 
 async function requestJson(url, options = {}) {
-  const { auth = true, ...fetchOptions } = options;
+  const { auth = true, phase = "request", ...fetchOptions } = options;
   const response = await fetch(url, fetchOptions);
   const text = await response.text();
   let body;
@@ -80,7 +82,7 @@ async function requestJson(url, options = {}) {
     body = { raw: text };
   }
   if (!response.ok) {
-    throw new Error(`阿里云 ASR 请求失败 ${response.status}：${JSON.stringify(body).slice(0, 500)}`);
+    throw new Error(`阿里云 ASR ${phase} 请求失败 ${response.status}：${JSON.stringify(body).slice(0, 500)}`);
   }
   return body;
 }
