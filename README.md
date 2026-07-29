@@ -19,13 +19,23 @@
 
 系统不做自动打分，而是做“证据链式课堂复盘”。每条 AI 结论都必须绑定视频时间点和课堂原文，并经过教师确认后才能进入报告。第一版不做视频 OCR、画面证据框选或课件分析，只基于语音转文字与时间戳分析。
 
-## 模拟与待接入部分
+## 模拟与真实后端
 
-前端仍保留 localStorage 演示数据，方便没有后端环境时预览完整交互。接入后端后，视频会先直传阿里云 OSS，数据库只保存文件归属、对象地址和处理状态，后端再从 OSS 读取视频完成音频抽取、语音识别和证据分析。
+前端仍保留 localStorage 演示数据，方便没有后端环境时预览完整交互。接入后端后，视频会先直传 Cloudflare R2，Supabase PostgreSQL 只保存文件归属、对象地址和处理状态，后端再从 R2 读取视频完成音频抽取、语音识别和证据分析。
+
+## 平台分工
+
+| 账号/平台 | 负责的主要功能 | 关键配置 |
+|---|---|---|
+| Supabase | PostgreSQL 数据库、教师登录、保存课堂/逐字稿/证据卡片/复核结果/报告 | `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DATABASE_URL`、`DIRECT_URL` |
+| Google Cloud | 部署前端和 API、运行后台视频处理任务、构建和保存 Docker 镜像、保存密钥、查看日志 | Cloud Run、Cloud Run Jobs、Cloud Build、Artifact Registry、Secret Manager、Logging |
+| Cloudflare | 使用 R2 存储课堂原始视频、临时音频和导出文件；提供预签名上传与播放 | `R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_BUCKET`、`R2_ENDPOINT` |
+| 阿里云 | ASR 将课堂音频转为带时间点逐字稿；LLM 将逐字稿生成课堂事件、证据卡片和报告 | ASR 的 AppKey/AccessKey；LLM 的 `BASE_URL`、`API_KEY`、`MODEL` |
+| GitHub | 保存代码、版本管理、让 AI Agent 修改和提交项目 | 代码仓库及访问权限 |
 
 ## 本地运行
 
-直接打开 `index.html` 即可使用前端演示。
+直接打开 `index.html` 即可使用。
 
 如需用本地服务预览：
 
@@ -41,21 +51,30 @@ http://localhost:8080
 
 ## 后端运行
 
-第一版后端使用阿里云 OSS 保存视频，数据库只保存文件归属、OSS object key 和处理状态，不保存视频二进制。
+第一版后端使用 Cloudflare R2 保存视频、临时音频和导出文件，数据库只保存文件归属、R2 object key 和处理状态，不保存视频二进制。
 
-1. 准备 PostgreSQL。
-2. 准备阿里云 OSS bucket，并配置 CORS 允许前端域名 `PUT` 上传。
+1. 准备 Supabase 项目，复制数据库连接串。
+2. 准备 Cloudflare R2 bucket，并配置 CORS 允许前端域名 `PUT` 上传。
 3. 复制 `.env.example` 为 `.env`，填写：
 
 ```text
+SUPABASE_URL=https://你的项目.supabase.co
+SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 DATABASE_URL=postgres://...
-S3_REGION=oss-cn-hangzhou
-S3_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
-S3_BUCKET=你的 bucket
-S3_ACCESS_KEY_ID=你的 AccessKeyId
-S3_SECRET_ACCESS_KEY=你的 AccessKeySecret
-S3_FORCE_PATH_STYLE=false
-FRONTEND_ORIGIN=https://guizongzi.github.io
+DIRECT_URL=postgres://...
+R2_ACCOUNT_ID=...
+R2_ENDPOINT=https://你的账号ID.r2.cloudflarestorage.com
+R2_BUCKET=你的 bucket
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+ALIYUN_ASR_APP_KEY=...
+ALIYUN_ACCESS_KEY_ID=...
+ALIYUN_ACCESS_KEY_SECRET=...
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_API_KEY=...
+LLM_MODEL=qwen-plus
+FRONTEND_ORIGIN=https://你的前端域名
 ```
 
 4. 安装依赖并初始化数据库：
