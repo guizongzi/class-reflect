@@ -292,7 +292,9 @@ function buildEvidenceCards({ transcriptSegments, sections }) {
         suggestion: "关键问题后建议保留 3-5 秒安静思考时间，再邀请学生回答。",
         startMs: current.startMs,
         endMs: Math.max(next.endMs, current.endMs),
-        quoteText: `${current.speakerLabel}：“${current.originalText}” 学生约 ${(waitMs / 1000).toFixed(1)} 秒后回应：“${next.originalText}”`,
+        quoteText: buildEvidenceParagraph(transcriptSegments, i, {
+          note: `学生约 ${(waitMs / 1000).toFixed(1)} 秒后回应`
+        }),
         confidenceLabel: "需要复核"
       });
     }
@@ -306,14 +308,32 @@ function buildEvidenceCards({ transcriptSegments, sections }) {
       suggestion: "建议教师先标记重点片段，再重新运行分析。",
       startMs: first.startMs,
       endMs: first.endMs,
-      quoteText: first.originalText,
+      quoteText: buildEvidenceParagraph(transcriptSegments, 0),
       confidenceLabel: "证据不足"
     });
   }
   return cards;
 }
 
+function buildEvidenceParagraph(transcriptSegments, focusIndex, options = {}) {
+  const start = Math.max(0, focusIndex - 1);
+  const end = Math.min(transcriptSegments.length, focusIndex + 3);
+  const lines = transcriptSegments.slice(start, end).map((segment, index) => {
+    const marker = start + index === focusIndex ? "重点" : "上下文";
+    return `${marker} ${msToClock(segment.startMs)}-${msToClock(segment.endMs)} ${segment.speakerLabel || "未知"}：${String(segment.originalText || "").trim()}`;
+  });
+  if (options.note) lines.push(`判断依据：${options.note}`);
+  return lines.join("\n");
+}
+
 function findSectionIndex(sections, startMs) {
   const index = sections.findIndex((section) => startMs >= section.startMs && startMs <= section.endMs);
   return index === -1 ? 0 : index;
+}
+
+function msToClock(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
