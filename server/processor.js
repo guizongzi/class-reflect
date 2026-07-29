@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { query, withTransaction } from "./db.js";
 import { config } from "./config.js";
 import { transcribeAudio } from "./asr.js";
-import { audioObjectKey, downloadObjectToFile, uploadFile } from "./storage.js";
+import { audioObjectKey, createReadUrl, downloadObjectToFile, uploadFile } from "./storage.js";
 
 export function enqueueVideoProcessing(taskId) {
   setImmediate(() => {
@@ -37,14 +37,19 @@ export async function processVideoTask(taskId) {
     await extractAudio(videoPath, audioPath);
 
     await updateTask(taskId, "running", 38, "upload_audio");
-    await uploadFile(audioObjectKey({
+    const audioKey = audioObjectKey({
       teacherId: task.teacher_id,
       lessonId: task.lesson_id,
       taskId: task.id
-    }), audioPath, "audio/wav");
+    });
+    await uploadFile(audioKey, audioPath, "audio/wav");
+    const audioUrl = await createReadUrl({
+      objectKey: audioKey,
+      expiresIn: config.aliyun.asrFileUrlExpiresSeconds
+    });
 
     await updateTask(taskId, "running", 50, "asr");
-    const transcriptSegments = await transcribeAudio(audioPath);
+    const transcriptSegments = await transcribeAudio(audioPath, { audioUrl });
 
     await updateTask(taskId, "running", 70, "write_transcript");
     const sections = buildLessonSections(transcriptSegments);
