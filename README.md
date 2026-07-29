@@ -21,18 +21,11 @@
 
 ## 模拟与待接入部分
 
-当前版本是可上线的前端原型，使用浏览器 localStorage 保存数据，作为模拟后端。后续上线真实服务时，可以把 `app.js` 中的视频存储、ASR、分析和报告生成逻辑替换为 API：
-
-- `POST /classes`
-- `POST /classes/:id/video`
-- `POST /classes/:id/transcript`
-- `POST /classes/:id/analyze`
-- `PATCH /findings/:id`
-- `GET /classes/:id/report`
+前端仍保留 localStorage 演示数据，方便没有后端环境时预览完整交互。接入后端后，视频会先直传阿里云 OSS，数据库只保存文件归属、对象地址和处理状态，后端再从 OSS 读取视频完成音频抽取、语音识别和证据分析。
 
 ## 本地运行
 
-直接打开 `index.html` 即可使用。
+直接打开 `index.html` 即可使用前端演示。
 
 如需用本地服务预览：
 
@@ -45,6 +38,41 @@ python3 -m http.server 8080
 ```text
 http://localhost:8080
 ```
+
+## 后端运行
+
+第一版后端使用阿里云 OSS 保存视频，数据库只保存文件归属、OSS object key 和处理状态，不保存视频二进制。
+
+1. 准备 PostgreSQL。
+2. 准备阿里云 OSS bucket，并配置 CORS 允许前端域名 `PUT` 上传。
+3. 复制 `.env.example` 为 `.env`，填写：
+
+```text
+DATABASE_URL=postgres://...
+S3_REGION=oss-cn-hangzhou
+S3_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+S3_BUCKET=你的 bucket
+S3_ACCESS_KEY_ID=你的 AccessKeyId
+S3_SECRET_ACCESS_KEY=你的 AccessKeySecret
+S3_FORCE_PATH_STYLE=false
+FRONTEND_ORIGIN=https://guizongzi.github.io
+```
+
+4. 安装依赖并初始化数据库：
+
+```bash
+npm install
+npm run db:init
+npm start
+```
+
+前端默认请求同源 `/api`。如果前端部署在 GitHub Pages、后端部署在其他域名，可在浏览器控制台设置：
+
+```js
+localStorage.setItem("classReflectApiBase", "https://你的后端域名")
+```
+
+然后刷新页面。
 
 ## GitHub Pages 部署
 
