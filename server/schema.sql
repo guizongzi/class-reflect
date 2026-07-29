@@ -52,12 +52,21 @@ create table if not exists transcript_segments (
   end_ms integer not null,
   speaker_label text default '未知',
   original_text text not null,
+  raw_original_text text,
   translated_text text,
+  raw_translated_text text,
   confidence numeric,
   source text not null default 'asr',
+  reviewed_at timestamptz,
+  reviewer_id text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table transcript_segments add column if not exists raw_original_text text;
+alter table transcript_segments add column if not exists raw_translated_text text;
+alter table transcript_segments add column if not exists reviewed_at timestamptz;
+alter table transcript_segments add column if not exists reviewer_id text;
 
 create table if not exists lesson_sections (
   id uuid primary key default gen_random_uuid(),
