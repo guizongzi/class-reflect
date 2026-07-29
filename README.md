@@ -134,11 +134,15 @@ gcloud artifacts repositories create class-reflect \
   "R2_BUCKET": "你的 bucket",
   "R2_ACCESS_KEY_ID": "...",
   "R2_SECRET_ACCESS_KEY": "...",
+  "ASR_PROVIDER": "aliyun",
   "ALIYUN_DASHSCOPE_API_KEY": "...",
+  "ALIYUN_ASR_MODEL": "qwen3-asr-flash-filetrans",
+  "ALIYUN_ASR_BASE_URL": "https://你的业务空间ID.ap-southeast-1.maas.aliyuncs.com/api/v1",
   "LLM_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
   "LLM_API_KEY": "...",
   "LLM_MODEL": "qwen-plus",
-  "FRONTEND_ORIGIN": "https://你的前端域名"
+  "FRONTEND_ORIGIN": "https://你的前端域名",
+  "DEBUG_TOKEN": "临时调试口令"
 }
 ```
 
@@ -163,7 +167,8 @@ gcloud artifacts repositories create class-reflect \
   },
   "aliyun": {
     "dashscopeApiKey": "...",
-    "asrModel": "qwen3-asr-flash-filetrans"
+    "asrModel": "qwen3-asr-flash-filetrans",
+    "asrBaseUrl": "https://你的业务空间ID.ap-southeast-1.maas.aliyuncs.com/api/v1"
   },
   "llm": {
     "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -192,6 +197,17 @@ https://你的-cloud-run-url/api/health
 ```
 
 返回 `ok: true` 后，再初始化数据库并测试上传链路。
+
+可选：如果需要让 Cloud Run 直接检测阿里云 ASR，可以在 `APP_CONFIG_ENV` 里临时加入 `DEBUG_TOKEN`，重新部署后调用：
+
+```bash
+curl -X POST "https://你的-cloud-run-url/api/debug/asr-smoke-test" \
+  -H "Content-Type: application/json" \
+  -H "x-debug-token: 你的 DEBUG_TOKEN" \
+  -d '{}'
+```
+
+接口会使用线上同一套 Secret 和网络，转写一个公开测试音频，并返回前几段逐字稿。调试结束后建议删除 `DEBUG_TOKEN` 或换成不可猜测的长随机值。
 
 ## GitHub Pages 部署
 
