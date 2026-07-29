@@ -3,6 +3,7 @@ import { z } from "zod";
 const AppConfigSchema = z.object({
   port: z.number().default(8080),
   frontendOrigin: z.string().default("*"),
+  databaseUrl: z.string().optional(),
   asrProvider: z.string().default("mock"),
   aliyunAsrModel: z.string().default("qwen3-asr-flash-filetrans")
 });
@@ -14,6 +15,7 @@ export function loadAppConfig(): AppConfig {
   return AppConfigSchema.parse({
     port: Number(process.env.PORT || raw.PORT || raw.port || 8080),
     frontendOrigin: process.env.FRONTEND_ORIGIN || raw.FRONTEND_ORIGIN || raw.frontendOrigin || "*",
+    databaseUrl: process.env.DATABASE_URL || raw.DATABASE_URL || raw.databaseUrl,
     asrProvider: process.env.ASR_PROVIDER || raw.ASR_PROVIDER || raw.asrProvider || "mock",
     aliyunAsrModel:
       process.env.ALIYUN_ASR_MODEL ||

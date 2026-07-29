@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
 import { CreateLessonRequestSchema } from "@class-reflect/api-contracts";
 import { LessonsService } from "./lessons.service";
 
@@ -19,5 +19,10 @@ export class LessonsController {
   @Get(":lessonId")
   async getLesson(@Param("lessonId") lessonId: string) {
     return this.lessons.getLesson(lessonId);
+  }
+
+  @Delete(":lessonId")
+  async deleteLesson(@Param("lessonId") lessonId: string) {
+    return this.lessons.deleteLesson(lessonId);
   }
 }

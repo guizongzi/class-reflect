@@ -16,10 +16,11 @@
 - 部署配置：Cloud Build 同时构建并部署 API、Web、Worker Job。
 - 旧实现归档：旧 Node/Express + Vite 版本移动到 `legacy/node-mvp`。
 - 文档：`TECHNICAL_MANUAL.md` 与 `ARCHITECTURE_BASELINE.md` 已对齐新骨架。
+- 课堂库：从 API 读取真实课堂列表，显示上传、处理、转写、报告状态，支持刷新和删除。
 
 未完成：
 
-- 新 NestJS API 尚未接入 Supabase、R2、阿里云 ASR、LLM。
+- 新 NestJS API 已开始接入 Supabase/PostgreSQL 的课堂列表和删除；R2、阿里云 ASR、LLM 尚未迁入新架构。
 - 新 Next.js 前端尚未真实调用上传、处理、转写、分析、复核、报告接口。
 - Worker 目前是职责骨架，尚未执行真实视频处理链。
 - 当前新架构中还没有完整数据库 repository、provider 实现和 processor 拆分。
@@ -46,15 +47,17 @@ apps/web/src/features/lesson-library/lesson-library.tsx
 已实现：
 
 - 顶部产品标题和“上传新视频”入口。
-- 课堂库空状态。
+- 从 `GET /api/lessons` 读取真实课堂列表。
+- 显示上传状态、处理状态、转写段数和报告数量。
+- 支持刷新状态。
+- 支持删除课堂，删除后自动刷新列表。
+- 支持加载中、空状态和错误提示。
 - UI 已去掉固定 demo 课堂，避免误认为有真实数据。
 
 未实现：
 
-- 从 API 读取真实课堂列表。
-- 显示上传状态、处理状态、转写数量、报告状态。
-- 删除课堂。
-- 刷新状态。
+- 删除课堂时同步清理 R2 对象文件。
+- 课堂列表分页、搜索和筛选。
 
 ### 2.3 课堂工作台
 
@@ -190,9 +193,9 @@ CreateLessonRequestSchema
 
 当前状态：
 
-- 已实现基础内存式 draft 创建。
+- 已接入 `packages/database`，写入 `lessons` 表。
 - 使用 `packages/domain` 的 `createLessonDraft`。
-- 尚未写入 Supabase。
+- 兼容旧表结构：如果数据库暂时没有 `lesson_format` 或 `analysis_goal` 字段，会先写入基础课堂字段。
 
 ### 3.3 获取课堂列表
 
@@ -210,9 +213,9 @@ GET /api/lessons
 
 当前状态：
 
-- 已实现接口骨架。
-- 当前返回空列表。
-- 尚未接入 Supabase 查询。
+- 已接入 `packages/database` 和 Supabase/PostgreSQL。
+- 返回真实课堂列表。
+- 聚合最近视频、最近 workflow、逐字稿段数、大段记录数、证据卡数和报告数。
 
 ### 3.4 获取课堂详情
 
@@ -238,11 +241,32 @@ GET /api/lessons/:lessonId
 
 当前状态：
 
-- 已实现接口骨架。
-- 当前返回占位课堂详情和空数组。
-- 尚未读取真实课堂、视频、逐字稿、证据卡、报告。
+- 已接入 `packages/database` 和 Supabase/PostgreSQL。
+- 返回真实课堂、课堂大段、逐字稿、证据卡和报告列表。
+- 暂未返回视频播放签名 URL。
 
-### 3.5 获取课堂处理状态
+### 3.5 删除课堂
+
+```http
+DELETE /api/lessons/:lessonId
+```
+
+返回示例：
+
+```json
+{
+  "ok": true,
+  "deletedLessonId": "lessonId"
+}
+```
+
+当前状态：
+
+- 已接入 `packages/database`。
+- 删除 `lessons` 记录，依赖数据库外键级联删除相关记录。
+- 尚未同步删除 R2 中的原始视频、临时音频和导出文件。
+
+### 3.6 获取课堂处理状态
 
 ```http
 GET /api/lessons/:lessonId/status
@@ -423,10 +447,10 @@ legacy/node-mvp
    - 不在 controller 或 worker 中重复手写 SQL。
 
 2. 创建课堂真实入库
-   - `POST /api/lessons` 写入 `lessons`。
-   - 保存课堂类型、课程、年级、学科、复盘目标。
-   - `GET /api/lessons` 返回真实课堂列表。
-   - `GET /api/lessons/:lessonId` 返回真实详情。
+   - 已完成：`POST /api/lessons` 写入 `lessons`。
+   - 已完成：`GET /api/lessons` 返回真实课堂列表。
+   - 已完成：`GET /api/lessons/:lessonId` 返回真实详情。
+   - 待补齐：稳定保存课堂类型和复盘目标字段，需要数据库 migration 确认。
 
 3. 视频上传链路
    - `POST /api/lessons/:lessonId/videos/upload-url` 生成 R2 预签名上传地址。
