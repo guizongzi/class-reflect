@@ -5,6 +5,11 @@ const FLOW = ["对话发起", "处理过程", "校订原文", "核对证据", "�
 const state = createInitialState();
 
 const el = {
+  libraryView: document.querySelector("#libraryView"),
+  workspaceView: document.querySelector("#workspaceView"),
+  lessonList: document.querySelector("#lessonList"),
+  startAnalysis: document.querySelector("#startAnalysis"),
+  showLibrary: document.querySelector("#showLibrary"),
   videoInput: document.querySelector("#videoInput"),
   videoName: document.querySelector("#videoName"),
   classVideo: document.querySelector("#classVideo"),
@@ -25,6 +30,10 @@ const el = {
 };
 
 render();
+loadLibrary();
+
+el.startAnalysis.addEventListener("click", () => startNewAnalysis());
+el.showLibrary.addEventListener("click", () => showLibrary());
 
 el.videoInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
@@ -50,9 +59,7 @@ el.recordEditor.addEventListener("input", () => {
 
 el.recordEditor.addEventListener("blur", () => saveCurrentSection());
 el.newAnalysis.addEventListener("click", () => {
-  localStorage.removeItem("classReflectActiveSession");
-  Object.assign(state, createInitialState());
-  render();
+  startNewAnalysis();
 });
 el.editRecord.addEventListener("click", () => el.recordEditor.focus());
 el.markImportant.addEventListener("click", () => tagCurrentSection("重点"));
@@ -71,6 +78,9 @@ function createInitialState() {
     videoUrl: saved?.videoUrl || null,
     fileName: saved?.fileName || "",
     uploadProgress: 0,
+    audioProgress: 0,
+    audioStatus: "idle",
+    audioError: "",
     processingStatus: saved?.processingStatus || "idle",
     error: "",
     step: saved?.step || 1,
@@ -78,6 +88,9 @@ function createInitialState() {
     messages: [],
     sections: [],
     evidenceCards: [],
+    library: [],
+    libraryError: "",
+    view: saved?.lessonId ? "workspace" : "library",
     currentSectionIndex: 0,
     dirty: false,
     pollTimer: null
@@ -94,7 +107,16 @@ function readActiveSession() {
 
 async function uploadVideo(file) {
   try {
-    Object.assign(state, { fileName: file.name, uploadProgress: 0, processingStatus: "uploading", error: "" });
+    Object.assign(state, {
+      fileName: file.name,
+      uploadProgress: 0,
+      audioProgress: 0,
+      audioStatus: "preparing",
+      audioError: "",
+      processingStatus: "uploading",
+      error: "",
+      view: "workspace"
+    });
     state.videoUrl = URL.createObjectURL(file);
     syncStep();
     render();
@@ -118,10 +140,14 @@ async function uploadVideo(file) {
     });
     state.videoId = uploadInfo.video_id;
 
-    await putFile(uploadInfo.upload_url, file, uploadInfo.headers?.["Content-Type"] || file.type || "application/octet-stream", (progress) => {
+    const videoUpload = putFile(uploadInfo.upload_url, file, uploadInfo.headers?.["Content-Type"] || file.type || "application/octet-stream", (progress) => {
       state.uploadProgress = progress;
       render();
     });
+    const audioUpload = uploadAudioFromVideoFile(file);
+
+    await videoUpload;
+    await audioUpload;
 
     const task = await api(`/api/videos/${state.videoId}/complete-upload`, { method: "POST" });
     state.taskId = task.task_id;
@@ -130,6 +156,32 @@ async function uploadVideo(file) {
     pollStatus();
   } catch (error) {
     fail(error.message || "上传失败");
+  }
+}
+
+async function uploadAudioFromVideoFile(file) {
+  if (!state.videoId) return;
+  try {
+    state.audioStatus = "extracting";
+    render();
+    const audioBlob = await extractWavFromMediaFile(file);
+    const uploadInfo = await api(`/api/videos/${state.videoId}/audio-upload-url`, {
+      method: "POST",
+      body: { mime_type: "audio/wav" }
+    });
+    state.audioStatus = "uploading";
+    render();
+    await putFile(uploadInfo.upload_url, audioBlob, uploadInfo.headers?.["Content-Type"] || "audio/wav", (progress) => {
+      state.audioProgress = progress;
+      render();
+    });
+    await api(`/api/videos/${state.videoId}/complete-audio-upload`, { method: "POST" });
+    state.audioStatus = "uploaded";
+    render();
+  } catch (error) {
+    state.audioStatus = "fallback";
+    state.audioError = error.message || "浏览器无法生成音频，worker 会从视频抽取";
+    render();
   }
 }
 
@@ -144,6 +196,7 @@ async function pollStatus() {
     if (state.processingStatus === "completed") {
       await loadLesson();
       state.processingStatus = "ready";
+      loadLibrary();
     }
     syncStep();
     saveSession();
@@ -154,6 +207,81 @@ async function pollStatus() {
   } catch (error) {
     fail(error.message || "无法读取处理状态");
   }
+}
+
+async function extractWavFromMediaFile(file) {
+  if (!window.AudioContext && !window.webkitAudioContext) {
+    throw new Error("当前浏览器不支持本地音频解码");
+  }
+  if (file.size > 600 * 1024 * 1024) {
+    throw new Error("视频较大，改由 worker 从视频抽取音频");
+  }
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const arrayBuffer = await file.arrayBuffer();
+  const audioContext = new AudioContextClass();
+  try {
+    const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+    return encodeWav(decoded, 16000);
+  } finally {
+    if (audioContext.close) await audioContext.close();
+  }
+}
+
+function encodeWav(audioBuffer, targetSampleRate) {
+  const channelData = mixToMono(audioBuffer);
+  const samples = resampleLinear(channelData, audioBuffer.sampleRate, targetSampleRate);
+  const dataSize = samples.length * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, dataSize, true);
+  let offset = 44;
+  for (const sample of samples) {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    offset += 2;
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function mixToMono(audioBuffer) {
+  const length = audioBuffer.length;
+  const output = new Float32Array(length);
+  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
+    const input = audioBuffer.getChannelData(channel);
+    for (let index = 0; index < length; index += 1) output[index] += input[index] / audioBuffer.numberOfChannels;
+  }
+  return output;
+}
+
+function resampleLinear(input, sourceRate, targetRate) {
+  if (sourceRate === targetRate) return input;
+  const ratio = sourceRate / targetRate;
+  const length = Math.max(1, Math.round(input.length / ratio));
+  const output = new Float32Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const position = index * ratio;
+    const left = Math.floor(position);
+    const right = Math.min(left + 1, input.length - 1);
+    const weight = position - left;
+    output[index] = input[left] * (1 - weight) + input[right] * weight;
+  }
+  return output;
+}
+
+function writeString(view, offset, value) {
+  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
 }
 
 async function loadLesson() {
@@ -217,12 +345,102 @@ function syncStep() {
   else state.step = 1;
 }
 
+async function loadLibrary() {
+  try {
+    const data = await api("/api/lessons");
+    state.library = data.lessons || [];
+    state.libraryError = "";
+  } catch (error) {
+    state.libraryError = error.message || "无法读取视频库";
+    state.library = [];
+  }
+  renderLibrary();
+}
+
+async function openLesson(lessonId) {
+  const lesson = await api(`/api/lessons/${lessonId}`);
+  state.lessonId = lessonId;
+  state.videoId = lesson.video?.id || null;
+  state.taskId = null;
+  state.fileName = lesson.video?.file_name || "";
+  state.processingStatus = lesson.lesson?.status === "ready" ? "ready" : lesson.video?.processing_status || lesson.lesson?.status || "idle";
+  state.videoUrl = lesson.playback_url;
+  state.sections = (lesson.sections || []).map(normalizeSection);
+  state.evidenceCards = lesson.evidence_cards || [];
+  state.currentSectionIndex = 0;
+  state.view = "workspace";
+  syncStep();
+  saveSession();
+  render();
+  if (["queued", "running", "processing"].includes(state.processingStatus)) pollStatus();
+}
+
+async function deleteLesson(lessonId) {
+  if (!confirm("确定删除这条课堂视频和相关记录吗？")) return;
+  await api(`/api/lessons/${lessonId}`, { method: "DELETE" });
+  if (state.lessonId === lessonId) startNewAnalysis({ stayInLibrary: true });
+  await loadLibrary();
+}
+
+function startNewAnalysis({ stayInLibrary = false } = {}) {
+  localStorage.removeItem("classReflectActiveSession");
+  const next = createInitialState();
+  Object.keys(state).forEach((key) => delete state[key]);
+  Object.assign(state, next, { view: stayInLibrary ? "library" : "workspace" });
+  render();
+}
+
+function showLibrary() {
+  state.view = "library";
+  render();
+  loadLibrary();
+}
+
 function render() {
+  renderShell();
   renderVideo();
   renderSegments();
   renderRecord();
   renderFlow();
   renderConversation();
+}
+
+function renderShell() {
+  const view = state.view || (state.lessonId ? "workspace" : "library");
+  el.libraryView.hidden = view !== "library";
+  el.workspaceView.hidden = view !== "workspace";
+}
+
+function renderLibrary() {
+  if (!el.lessonList) return;
+  if (state.libraryError) {
+    el.lessonList.innerHTML = `<div class="empty-library">读取失败：${escapeHtml(state.libraryError)}</div>`;
+    return;
+  }
+  if (!state.library?.length) {
+    el.lessonList.innerHTML = `<div class="empty-library">还没有课堂视频。点击“上传新视频”开始第一条复盘。</div>`;
+    return;
+  }
+  el.lessonList.innerHTML = state.library.map((lesson) => `
+    <article class="lesson-row">
+      <div>
+        <strong>${escapeHtml(lesson.lesson_title || "课堂视频复盘")}</strong>
+        <p>${escapeHtml(lesson.file_name || "未上传视频")}</p>
+        <span>${formatDate(lesson.updated_at || lesson.created_at)} · ${lesson.segment_count || 0} 条逐字稿 · ${lesson.section_count || 0} 个课堂片段</span>
+      </div>
+      <div class="lesson-status">
+        <span class="status-pill">${escapeHtml(statusLabel(lesson))}</span>
+        <button class="light-button" type="button" data-open="${lesson.id}">打开</button>
+        <button class="danger-button" type="button" data-delete="${lesson.id}">删除</button>
+      </div>
+    </article>
+  `).join("");
+  el.lessonList.querySelectorAll("[data-open]").forEach((button) => {
+    button.addEventListener("click", () => openLesson(button.dataset.open));
+  });
+  el.lessonList.querySelectorAll("[data-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteLesson(button.dataset.delete));
+  });
 }
 
 function renderVideo() {
@@ -295,8 +513,16 @@ function user(text) {
 }
 
 function aiStatus() {
+  const audioLabel = {
+    idle: "",
+    preparing: "；音频通道准备中",
+    extracting: "；正在本地生成 ASR 音频",
+    uploading: `；音频上传 ${state.audioProgress}%`,
+    uploaded: "；音频已上传，可优先转写",
+    fallback: `；音频通道回退：${state.audioError}`
+  }[state.audioStatus] || "";
   const label = {
-    uploading: `视频上传中 ${state.uploadProgress}%`,
+    uploading: `视频上传中 ${state.uploadProgress}%${audioLabel}`,
     queued: "已入队，等待处理",
     running: "正在抽音频、转写并写入数据库",
     ready: "处理完成",
@@ -368,6 +594,19 @@ function saveSession() {
     step: state.step,
     goal: state.goal
   }));
+}
+
+function statusLabel(lesson) {
+  if (lesson.error_message) return `失败：${lesson.error_message}`;
+  if (lesson.processing_status === "completed" || lesson.status === "ready") return "已完成";
+  if (lesson.processing_status === "queued" || lesson.status === "processing") return "处理中";
+  if (lesson.upload_status === "uploaded") return "已上传";
+  return "未完成";
+}
+
+function formatDate(value) {
+  if (!value) return "未知时间";
+  return new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 function clock(ms) {
