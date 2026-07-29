@@ -4,28 +4,42 @@ export const config = {
   port: Number(process.env.PORT || 3000),
   publicBaseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:3000",
   frontendOrigin: process.env.FRONTEND_ORIGIN || "http://localhost:3000",
-  databaseUrl: process.env.DATABASE_URL,
-  s3: {
-    region: process.env.S3_REGION || "auto",
-    endpoint: process.env.S3_ENDPOINT,
-    bucket: process.env.S3_BUCKET,
-    accessKeyId: process.env.S3_ACCESS_KEY_ID,
-    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
-    forcePathStyle: String(process.env.S3_FORCE_PATH_STYLE || "true") === "true"
+  databaseUrl: process.env.DATABASE_URL || process.env.DIRECT_URL,
+  directUrl: process.env.DIRECT_URL,
+  supabase: {
+    url: process.env.SUPABASE_URL,
+    anonKey: process.env.SUPABASE_ANON_KEY,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
+  },
+  r2: {
+    accountId: process.env.R2_ACCOUNT_ID,
+    region: process.env.R2_REGION || "auto",
+    endpoint: process.env.R2_ENDPOINT,
+    bucket: process.env.R2_BUCKET,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    forcePathStyle: true
   },
   asrProvider: process.env.ASR_PROVIDER || "mock",
-  openaiApiKey: process.env.OPENAI_API_KEY,
-  openaiTranscribeModel: process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe",
-  openaiTranslateModel: process.env.OPENAI_TRANSLATE_MODEL || "gpt-4o-mini-transcribe",
+  aliyun: {
+    asrAppKey: process.env.ALIYUN_ASR_APP_KEY,
+    accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID,
+    accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET
+  },
+  llm: {
+    baseUrl: process.env.LLM_BASE_URL,
+    apiKey: process.env.LLM_API_KEY,
+    model: process.env.LLM_MODEL
+  },
   ffmpegPath: process.env.FFMPEG_PATH || "ffmpeg"
 };
 
 export function assertRuntimeConfig() {
   const missing = [];
   if (!config.databaseUrl) missing.push("DATABASE_URL");
-  for (const [key, value] of Object.entries(config.s3)) {
+  for (const [key, value] of Object.entries(config.r2)) {
     if (["bucket", "accessKeyId", "secretAccessKey"].includes(key) && !value) {
-      missing.push(`S3_${key.replace(/[A-Z]/g, (m) => `_${m}`).toUpperCase()}`);
+      missing.push(`R2_${key.replace(/[A-Z]/g, (m) => `_${m}`).toUpperCase()}`);
     }
   }
   if (missing.length) {
