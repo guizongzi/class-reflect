@@ -24,13 +24,14 @@ const el = {
   taskInput: document.querySelector("#taskInput"),
   newAnalysis: document.querySelector("#newAnalysis"),
   editRecord: document.querySelector("#editRecord"),
+  saveRecord: document.querySelector("#saveRecord"),
   markImportant: document.querySelector("#markImportant"),
   markConfusing: document.querySelector("#markConfusing"),
   reanalyzeSegment: document.querySelector("#reanalyzeSegment")
 };
 
 render();
-loadLibrary();
+bootstrap();
 
 el.startAnalysis.addEventListener("click", () => startNewAnalysis());
 el.showLibrary.addEventListener("click", () => showLibrary());
@@ -58,6 +59,7 @@ el.recordEditor.addEventListener("input", () => {
 });
 
 el.recordEditor.addEventListener("blur", () => saveCurrentSection());
+el.saveRecord.addEventListener("click", () => saveCurrentSection({ force: true }));
 el.newAnalysis.addEventListener("click", () => {
   startNewAnalysis();
 });
@@ -68,6 +70,17 @@ el.reanalyzeSegment.addEventListener("click", () => rebuildSections());
 
 document.querySelector("#prevSegment").addEventListener("click", () => selectSection(Math.max(0, state.currentSectionIndex - 1)));
 document.querySelector("#nextSegment").addEventListener("click", () => selectSection(Math.min(state.sections.length - 1, state.currentSectionIndex + 1)));
+
+async function bootstrap() {
+  await loadLibrary();
+  if (state.lessonId && state.view === "workspace") {
+    try {
+      await openLesson(state.lessonId);
+    } catch (error) {
+      fail(error.message || "无法恢复上次任务");
+    }
+  }
+}
 
 function createInitialState() {
   const saved = readActiveSession();
@@ -88,11 +101,14 @@ function createInitialState() {
     messages: [],
     sections: [],
     evidenceCards: [],
+    workflowSteps: [],
+    resume: null,
     library: [],
     libraryError: "",
     view: saved?.lessonId ? "workspace" : "library",
     currentSectionIndex: 0,
     dirty: false,
+    lastRenderedSectionId: null,
     pollTimer: null
   };
 }
@@ -191,8 +207,12 @@ async function pollStatus() {
   try {
     const status = await api(`/api/lessons/${state.lessonId}/status`);
     const task = status.task;
+    const workflow = status.workflow;
     state.processingStatus = task?.status || "idle";
     state.error = task?.error_message || "";
+    state.workflowSteps = status.steps || [];
+    state.resume = status.resume || null;
+    if (workflow?.id) state.workflowRunId = workflow.id;
     if (state.processingStatus === "completed") {
       await loadLesson();
       state.processingStatus = "ready";
@@ -290,19 +310,23 @@ async function loadLesson() {
   state.evidenceCards = lesson.evidence_cards || [];
   state.videoUrl = lesson.playback_url || state.videoUrl;
   state.currentSectionIndex = 0;
+  state.dirty = false;
+  state.lastRenderedSectionId = null;
 }
 
-async function saveCurrentSection() {
-  if (!state.dirty) return;
+async function saveCurrentSection({ force = false } = {}) {
+  if (!state.dirty && !force) return;
   const section = state.sections[state.currentSectionIndex];
   if (!section?.id) return;
   try {
+    el.saveStatus.textContent = "正在保存...";
     const saved = await api(`/api/sections/${section.id}`, {
       method: "PATCH",
-      body: { edited_summary_text: el.recordEditor.value }
+      body: { edited_summary_text: el.recordEditor.value, review_status: "已校订" }
     });
     state.sections[state.currentSectionIndex] = normalizeSection(saved);
     state.dirty = false;
+    state.lastRenderedSectionId = saved.id;
     el.saveStatus.textContent = "已保存到后端";
   } catch (error) {
     el.saveStatus.textContent = `保存失败：${error.message}`;
@@ -322,18 +346,29 @@ async function rebuildSections() {
   }
 }
 
-function tagCurrentSection(tag) {
+async function tagCurrentSection(tag) {
   const section = state.sections[state.currentSectionIndex];
   if (!section) return;
-  section.tags = Array.from(new Set([...(section.tags || []), tag]));
-  el.saveStatus.textContent = `已标记：${tag}`;
-  renderSegments();
+  const tags = Array.from(new Set([...(section.tags || []), tag]));
+  try {
+    const saved = await api(`/api/sections/${section.id}`, {
+      method: "PATCH",
+      body: { tags, review_status: section.reviewStatus || "待校订" }
+    });
+    state.sections[state.currentSectionIndex] = normalizeSection(saved);
+    el.saveStatus.textContent = `已标记：${tag}`;
+    renderSegments();
+  } catch (error) {
+    el.saveStatus.textContent = `标记失败：${error.message}`;
+  }
 }
 
-function selectSection(index) {
+async function selectSection(index) {
   if (!state.sections[index]) return;
+  await saveCurrentSection();
   state.currentSectionIndex = index;
   state.dirty = false;
+  state.lastRenderedSectionId = null;
   render();
 }
 
@@ -359,11 +394,16 @@ async function loadLibrary() {
 
 async function openLesson(lessonId) {
   const lesson = await api(`/api/lessons/${lessonId}`);
+  const status = await api(`/api/lessons/${lessonId}/status`);
   state.lessonId = lessonId;
   state.videoId = lesson.video?.id || null;
   state.taskId = null;
   state.fileName = lesson.video?.file_name || "";
-  state.processingStatus = lesson.lesson?.status === "ready" ? "ready" : lesson.video?.processing_status || lesson.lesson?.status || "idle";
+  state.processingStatus = status.task?.status || (lesson.lesson?.status === "ready" ? "ready" : lesson.video?.processing_status || lesson.lesson?.status || "idle");
+  if (state.processingStatus === "completed") state.processingStatus = "ready";
+  state.error = status.task?.error_message || lesson.video?.error_message || "";
+  state.workflowSteps = status.steps || [];
+  state.resume = status.resume || null;
   state.videoUrl = lesson.playback_url;
   state.sections = (lesson.sections || []).map(normalizeSection);
   state.evidenceCards = lesson.evidence_cards || [];
@@ -471,8 +511,17 @@ function renderSegments() {
 function renderRecord() {
   const section = state.sections[state.currentSectionIndex];
   el.recordEditor.disabled = !section;
-  el.recordEditor.value = section ? section.text : "上传视频并完成语音转文字后，这里会生成带时间轴的大段课堂记录。你只需要编辑有问题的段落，不需要逐句确认。";
-  el.saveStatus.textContent = section ? "失焦后保存修改" : "等待处理";
+  if (!section) {
+    el.recordEditor.value = "上传视频并完成语音转文字后，这里会生成带时间轴的大段课堂记录。你只需要编辑有问题的段落，不需要逐句确认。";
+    el.saveStatus.textContent = "等待处理";
+    state.lastRenderedSectionId = null;
+    return;
+  }
+  if (!state.dirty || state.lastRenderedSectionId !== section.id) {
+    el.recordEditor.value = section.text;
+    state.lastRenderedSectionId = section.id;
+  }
+  el.saveStatus.textContent = state.dirty ? "有未保存修改" : `${section.reviewStatus || "待校订"} · 可整段编辑后保存`;
 }
 
 function renderFlow() {
@@ -502,6 +551,9 @@ function renderConversation() {
 
   if (state.error) cards.push(processCard("处理失败", state.error, "可以从当前失败步骤重试，不需要重新上传视频。"));
   el.conversation.innerHTML = cards.join("");
+  el.conversation.querySelectorAll("[data-retry-video]").forEach((button) => {
+    button.addEventListener("click", () => retryProcessing());
+  });
 }
 
 function ai(text) {
@@ -528,11 +580,42 @@ function aiStatus() {
     ready: "处理完成",
     failed: "处理失败"
   }[state.processingStatus] || "视频已选择";
-  return processCard("处理过程", label, "上传、对象存储、音频抽取、ASR 和写库都是后端真实状态。");
+  const steps = renderBackendSteps();
+  const retry = state.resume?.can_retry && state.videoId
+    ? `<button class="primary-button inline-action" type="button" data-retry-video="${state.videoId}">${escapeHtml(state.resume.retry_label || "继续处理")}</button>`
+    : "";
+  return processCard("处理过程", label, `上传、对象存储、音频抽取、ASR 和写库都是后端真实状态。${steps}${retry}`, { htmlNote: true });
 }
 
-function processCard(title, value, note) {
-  return `<div class="process-card"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(value)}</p><span>${escapeHtml(note)}</span></div>`;
+function processCard(title, value, note, options = {}) {
+  return `<div class="process-card"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(value)}</p><div class="process-note">${options.htmlNote ? note : escapeHtml(note)}</div></div>`;
+}
+
+function renderBackendSteps() {
+  if (!state.workflowSteps?.length) return "";
+  return `<ol class="backend-steps">${state.workflowSteps.map((step) => `
+    <li class="${escapeHtml(step.status)}">
+      <b>${escapeHtml(step.label || step.key)}</b>
+      <em>${escapeHtml(stepStatusLabel(step.status))}</em>
+      ${step.error_message ? `<small>${escapeHtml(step.error_message)}</small>` : ""}
+    </li>
+  `).join("")}</ol>`;
+}
+
+async function retryProcessing() {
+  if (!state.videoId) return;
+  try {
+    state.error = "";
+    state.processingStatus = "queued";
+    render();
+    const task = await api(`/api/videos/${state.videoId}/retry-processing`, { method: "POST" });
+    state.taskId = task.task_id;
+    state.processingStatus = task.status || "queued";
+    saveSession();
+    pollStatus();
+  } catch (error) {
+    fail(error.message || "继续处理失败");
+  }
 }
 
 async function api(path, options = {}) {
@@ -572,7 +655,8 @@ function normalizeSection(section) {
     endMs: section.end_ms ?? section.endMs ?? 0,
     title: section.title || "课堂片段",
     text: section.edited_summary_text || section.summary_text || section.text || "",
-    tags: Array.isArray(section.tags) ? section.tags : []
+    tags: Array.isArray(section.tags) ? section.tags : [],
+    reviewStatus: section.review_status || "待校订"
   };
 }
 
@@ -597,11 +681,36 @@ function saveSession() {
 }
 
 function statusLabel(lesson) {
+  if (lesson.workflow_status === "failed") return `失败：${lesson.workflow_error_message || lesson.error_message || "处理失败"}`;
+  if (lesson.workflow_status === "running") return `处理中：${stepStatusName(lesson.workflow_current_step)}`;
   if (lesson.error_message) return `失败：${lesson.error_message}`;
   if (lesson.processing_status === "completed" || lesson.status === "ready") return "已完成";
   if (lesson.processing_status === "queued" || lesson.status === "processing") return "处理中";
   if (lesson.upload_status === "uploaded") return "已上传";
   return "未完成";
+}
+
+function stepStatusLabel(status) {
+  return {
+    waiting: "等待",
+    queued: "排队",
+    running: "进行中",
+    completed: "完成",
+    failed: "失败"
+  }[status] || status || "等待";
+}
+
+function stepStatusName(key) {
+  return {
+    verify_upload: "校验上传",
+    download_video: "读取视频",
+    extract_audio: "抽取音频",
+    upload_audio: "保存音频",
+    asr: "语音转文字",
+    build_sections: "生成大段记录",
+    write_transcript: "写入数据库",
+    completed: "完成"
+  }[key] || "处理";
 }
 
 function formatDate(value) {

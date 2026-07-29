@@ -195,6 +195,8 @@ async function processVideoWorkflow(task) {
 }
 
 async function updateWorkflow(task, status, progress, currentStep) {
+  task.current_step = currentStep;
+  task.status = status;
   await withTransaction(async (client) => {
     if (task.id) {
       await client.query(`
@@ -246,33 +248,34 @@ async function updateWorkflow(task, status, progress, currentStep) {
 }
 
 async function failWorkflow(task, error) {
+  const failedStep = LESSON_ANALYSIS_STEPS.includes(task.current_step) ? task.current_step : "verify_upload";
   await withTransaction(async (client) => {
     if (task.id) {
       await client.query(`
         update workflow_runs
         set status = 'failed',
             error_message = $2,
-            current_step = 'failed',
+            current_step = $3,
             finished_at = now(),
             updated_at = now()
         where id = $1
-      `, [task.id, error.message]);
+      `, [task.id, error.message, failedStep]);
       await client.query(`
         insert into workflow_step_runs (workflow_run_id, step_key, status, progress, error_message, started_at, finished_at)
-        values ($1, 'failed', 'failed', 0, $2, now(), now())
+        values ($1, $2, 'failed', 0, $3, now(), now())
         on conflict (workflow_run_id, step_key)
         do update set status = 'failed',
                       error_message = excluded.error_message,
                       finished_at = now(),
                       updated_at = now()
-      `, [task.id, error.message]);
+      `, [task.id, failedStep, error.message]);
     }
     if (task.task_id) {
       await client.query(`
         update analysis_tasks
-        set status = 'failed', error_message = $2, current_step = 'failed', finished_at = now()
+        set status = 'failed', error_message = $2, current_step = $3, finished_at = now()
         where id = $1
-      `, [task.task_id, error.message]);
+      `, [task.task_id, error.message, failedStep]);
     }
   });
 }
