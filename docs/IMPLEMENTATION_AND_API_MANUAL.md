@@ -283,20 +283,32 @@ apps/api/src/modules/workflows/workflows.controller.ts
 ```json
 {
   "task": {
+    "id": "workflowRunId",
     "lessonId": "lessonId",
-    "status": "created",
-    "currentStep": "created",
+    "videoId": "videoId",
+    "status": "running",
+    "currentStep": "submit_asr",
+    "progress": 26,
     "errorMessage": null
   },
-  "steps": []
+  "steps": [
+    {
+      "stepKey": "upload_video",
+      "label": "上传视频",
+      "status": "completed",
+      "progress": 100,
+      "errorMessage": null
+    }
+  ]
 }
 ```
 
 当前状态：
 
-- 已实现接口骨架。
-- 当前返回 created 状态和空步骤。
-- 尚未接入 `workflow_runs` 与 `workflow_step_runs`。
+- 已接入 `workflow_runs` 与 `workflow_step_runs`。
+- 上传完成后会创建或恢复 workflow。
+- 前端 AI 任务助手会轮询该接口并显示步骤、进度和失败原因。
+- 数据库 migration 文件：`packages/database/migrations/20260730_workflow_runs.sql`。
 
 ## 4. 已实现 API 契约与共享类型
 
@@ -355,14 +367,17 @@ apps/worker/src/workflows/lesson-workflow.ts
 - 独立 Worker 应用入口。
 - 读取共享配置。
 - 使用共享日志。
-- 预留 lesson workflow。
-- 引用了 Agent、Metrics、Guardrail 包，表达分层方向。
+- 从数据库认领 queued workflow。
+- 通过 Agent Orchestrator 决定继续、等待上传、等待人工复核或失败。
+- 通过 Pipeline 顺序执行 processor。
+- 每个 processor 的开始、完成、失败会写入 workflow step。
+- 已接入 R2 object existence check、ASR provider 入口、Metrics、Guardrail 和 transcript normalizer Agent。
 
 当前状态：
 
-- 尚未认领数据库任务。
-- 尚未调用 R2、FFmpeg、ASR。
-- 尚未写入 workflow 状态。
+- 尚未实现 FFmpeg 回退抽音频。
+- 尚未实现 `transcript_segments` 入库 processor。
+- 尚未实现大段分段、事件、证据和报告 repository。
 - 尚未实现重试、超时和并发控制。
 
 ## 6. 已实现部署配置
@@ -457,7 +472,7 @@ legacy/node-mvp
    - 已完成：前端拖入或选择视频后真实上传到 R2。
    - 已完成：显示真实上传进度。
    - 已完成：`POST /api/lessons/videos/:videoId/complete-upload` 确认对象存在并更新视频状态。
-   - 待补齐：确认上传完成后创建或唤起 workflow。
+   - 已完成：确认上传完成后创建或唤起 workflow。
 
 4. 独立音频通道
    - 已完成：前端使用浏览器音频解码能力生成 WAV 音频。
@@ -467,19 +482,19 @@ legacy/node-mvp
    - Worker 在有音频时优先使用音频，无音频时回退 FFmpeg 抽取。
 
 5. Workflow 状态
-   - 新增或迁移 `workflow_runs`、`workflow_step_runs` repository。
-   - `GET /api/lessons/:lessonId/status` 返回真实步骤。
-   - 前端显示处理进度和失败原因。
+   - 已完成：新增或迁移 `workflow_runs`、`workflow_step_runs` repository。
+   - 已完成：`GET /api/lessons/:lessonId/status` 返回真实步骤。
+   - 已完成：前端显示处理进度和失败原因。
    - 失败后支持重试。
 
 6. Worker 真实处理
-   - 认领 queued workflow。
-   - 校验 R2 视频对象。
-   - 下载视频或读取已有音频。
-   - FFmpeg 抽音频。
-   - 上传临时音频到 R2。
-   - 调用阿里云 ASR。
-   - 写入 `transcript_segments`。
+   - 已完成：认领 queued workflow。
+   - 已完成：校验 R2 视频对象。
+   - 已完成：读取已有音频对象并生成短期读取 URL。
+   - 已完成：调用 ASR Provider 入口。
+   - 待补齐：FFmpeg 回退抽音频。
+   - 待补齐：上传临时音频到 R2。
+   - 待补齐：写入 `transcript_segments`。
    - 聚合并写入 `lesson_sections`。
 
 7. 逐字稿与大段校订

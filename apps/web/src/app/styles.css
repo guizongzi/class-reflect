@@ -453,6 +453,82 @@ a {
   background: #f7f8f6;
 }
 
+.assistant-card-title {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-card-title span {
+  color: #667085;
+  font-size: 12px;
+  text-align: right;
+}
+
+.workflow-step-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.workflow-step {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dfe4dc;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px 12px;
+}
+
+.workflow-step span {
+  color: #142033;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-step b {
+  color: #667085;
+  font-size: 12px;
+}
+
+.workflow-step small {
+  color: #b42318;
+  font-size: 12px;
+  grid-column: 1 / -1;
+}
+
+.workflow-step.completed {
+  border-color: #b7dfc9;
+}
+
+.workflow-step.completed b {
+  color: #1f8f55;
+}
+
+.workflow-step.running {
+  border-color: #c7d7fe;
+}
+
+.workflow-step.running b {
+  color: #2351a4;
+}
+
+.workflow-step.failed {
+  background: #fff4f2;
+  border-color: #fecdca;
+}
+
+.workflow-step.failed b {
+  color: #b42318;
+}
+
 .error-banner.compact {
   margin-top: 0;
 }

@@ -1,12 +1,19 @@
-import { runTranscriptNormalizer } from "@class-reflect/agents";
-import { calculateSpeechRate } from "@class-reflect/metrics";
-import { assertEvidenceHasSource } from "@class-reflect/guardrails";
+import { claimNextWorkflowRun } from "@class-reflect/database";
+import { createLogger } from "@class-reflect/observability";
+import { runLessonAnalysisPipeline } from "../pipelines/lesson-analysis-pipeline";
+
+const logger = createLogger("lesson-workflow");
 
 export async function runLessonWorkflowOnce(): Promise<{ claimed: boolean }> {
-  // M1 skeleton: keep workflow ownership here. Real queue claiming and R2/ASR processing
-  // are migrated from legacy/node-mvp into packages/database and packages/providers.
-  runTranscriptNormalizer([]);
-  calculateSpeechRate([]);
-  assertEvidenceHasSource({ sources: [] });
-  return { claimed: false };
+  const workerId = process.env.WORKER_ID || `worker-${process.pid}`;
+  const workflow = await claimNextWorkflowRun(workerId);
+  if (!workflow) return { claimed: false };
+
+  logger.info("claimed workflow", {
+    workflowRunId: workflow.id,
+    lessonId: workflow.lessonId,
+    videoId: workflow.videoId
+  });
+  await runLessonAnalysisPipeline(workflow);
+  return { claimed: true };
 }

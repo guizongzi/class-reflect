@@ -1,4 +1,5 @@
 import { loadAppConfig } from "@class-reflect/config";
+import { workflowStepOptions, type WorkflowStatus, type WorkflowStepKey, type WorkflowStepStatus } from "@class-reflect/shared-types";
 import { Pool } from "pg";
 
 export type RepositoryResult<T> = Promise<T>;
@@ -7,6 +8,46 @@ export interface WorkflowRepository {
   claimNext(): RepositoryResult<{ id: string } | null>;
   markFailed(id: string, errorMessage: string): RepositoryResult<void>;
 }
+
+export type WorkflowRunRecord = {
+  id: string;
+  lessonId: string;
+  videoId: string;
+  taskId: string | null;
+  workflowType: string;
+  status: WorkflowStatus;
+  progress: number;
+  currentStep: WorkflowStepKey | null;
+  retryCount: number;
+  errorMessage: string | null;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  lockedAt: string | null;
+  lockedBy: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkflowStepRunRecord = {
+  id: string;
+  workflowRunId: string;
+  stepKey: WorkflowStepKey;
+  label: string;
+  status: WorkflowStepStatus;
+  progress: number;
+  errorMessage: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkflowStatusRecord = {
+  task: WorkflowRunRecord | null;
+  steps: WorkflowStepRunRecord[];
+};
 
 export type LessonListRecord = {
   id: string;
@@ -341,7 +382,15 @@ export async function markLessonVideoUploaded(videoId: string): Promise<LessonVi
     returning *
   `, [videoId]);
   await touchLessonForVideo(videoId);
-  return result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+  const video = result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+  if (video) {
+    await createOrResumeLessonWorkflow(video, {
+      videoObjectKey: video.objectKey,
+      audioObjectKey: video.audioObjectKey
+    });
+    await updateWorkflowStepByVideo(video.id, "upload_video", "completed", 100);
+  }
+  return video;
 }
 
 export async function setLessonVideoAudioObject(input: {
@@ -378,7 +427,146 @@ export async function markLessonVideoAudioUploaded(videoId: string): Promise<Les
     returning *
   `, [videoId]);
   await touchLessonForVideo(videoId);
-  return result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+  const video = result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+  if (video) {
+    await createOrResumeLessonWorkflow(video, {
+      videoObjectKey: video.objectKey,
+      audioObjectKey: video.audioObjectKey
+    });
+    await updateWorkflowStepByVideo(video.id, "upload_audio", "completed", 100);
+  }
+  return video;
+}
+
+export async function createOrResumeLessonWorkflow(video: LessonVideoRecord, input: Record<string, unknown> = {}): Promise<WorkflowRunRecord> {
+  const existing = await getPool().query(`
+    select *
+    from workflow_runs
+    where video_id = $1 and status not in ('completed', 'cancelled')
+    order by created_at desc
+    limit 1
+  `, [video.id]);
+
+  const run = existing.rows[0]
+    ? await updateWorkflowRunInput(existing.rows[0].id, input)
+    : await createWorkflowRun(video, input);
+
+  await seedWorkflowSteps(run.id);
+  return run;
+}
+
+export async function getWorkflowStatusForLesson(lessonId: string): Promise<WorkflowStatusRecord> {
+  const result = await getPool().query(`
+    select *
+    from workflow_runs
+    where lesson_id = $1
+    order by created_at desc
+    limit 1
+  `, [lessonId]);
+  if (!result.rows[0]) {
+    return { task: null, steps: workflowStepOptions.map((step) => emptyWorkflowStep(step.key, step.label)) };
+  }
+
+  const task = mapWorkflowRunRow(result.rows[0]);
+  const steps = await listWorkflowSteps(task.id);
+  return { task, steps };
+}
+
+export async function claimNextWorkflowRun(workerId: string): Promise<WorkflowRunRecord | null> {
+  const result = await getPool().query(`
+    with candidate as (
+      select id
+      from workflow_runs
+      where status = 'queued'
+      order by created_at
+      limit 1
+      for update skip locked
+    )
+    update workflow_runs wf
+    set
+      status = 'running',
+      locked_at = now(),
+      locked_by = $1,
+      started_at = coalesce(started_at, now()),
+      updated_at = now()
+    from candidate
+    where wf.id = candidate.id
+    returning wf.*
+  `, [workerId]);
+  if (!result.rows[0]) return null;
+  const run = mapWorkflowRunRow(result.rows[0]);
+  await seedWorkflowSteps(run.id);
+  return run;
+}
+
+export async function updateWorkflowRunStatus(input: {
+  workflowRunId: string;
+  status: WorkflowStatus;
+  currentStep?: WorkflowStepKey | null;
+  progress?: number;
+  errorMessage?: string | null;
+  output?: Record<string, unknown>;
+}): Promise<WorkflowRunRecord | null> {
+  const result = await getPool().query(`
+    update workflow_runs
+    set
+      status = $2,
+      current_step = coalesce($3, current_step),
+      progress = coalesce($4, progress),
+      error_message = $5,
+      output = output || $6::jsonb,
+      finished_at = case when $2 in ('completed', 'failed', 'cancelled') then now() else finished_at end,
+      updated_at = now()
+    where id = $1
+    returning *
+  `, [
+    input.workflowRunId,
+    input.status,
+    input.currentStep ?? null,
+    input.progress ?? null,
+    input.errorMessage ?? null,
+    JSON.stringify(input.output || {})
+  ]);
+  return result.rows[0] ? mapWorkflowRunRow(result.rows[0]) : null;
+}
+
+export async function updateWorkflowStep(input: {
+  workflowRunId: string;
+  stepKey: WorkflowStepKey;
+  status: WorkflowStepStatus;
+  progress: number;
+  errorMessage?: string | null;
+}): Promise<WorkflowStepRunRecord | null> {
+  const result = await getPool().query(`
+    insert into workflow_step_runs (
+      workflow_run_id,
+      step_key,
+      status,
+      progress,
+      error_message,
+      started_at,
+      finished_at
+    )
+    values (
+      $1,
+      $2,
+      $3,
+      $4,
+      $5,
+      case when $3 = 'running' then now() else null end,
+      case when $3 in ('completed', 'failed', 'skipped') then now() else null end
+    )
+    on conflict (workflow_run_id, step_key)
+    do update set
+      status = excluded.status,
+      progress = excluded.progress,
+      error_message = excluded.error_message,
+      started_at = coalesce(workflow_step_runs.started_at, excluded.started_at),
+      finished_at = case when excluded.status in ('completed', 'failed', 'skipped') then now() else workflow_step_runs.finished_at end,
+      updated_at = now()
+    returning *
+  `, [input.workflowRunId, input.stepKey, input.status, input.progress, input.errorMessage || null]);
+  return result.rows[0] ? mapWorkflowStepRow(result.rows[0]) : null;
 }
 
 async function getLessonColumns() {
@@ -407,6 +595,140 @@ async function touchLessonForVideo(videoId: string) {
     set updated_at = now()
     where id = (select lesson_id from lesson_videos where id = $1)
   `, [videoId]);
+}
+
+async function createWorkflowRun(video: LessonVideoRecord, input: Record<string, unknown>) {
+  const result = await getPool().query(`
+    insert into workflow_runs (
+      lesson_id,
+      video_id,
+      workflow_type,
+      status,
+      progress,
+      current_step,
+      input
+    )
+    values ($1, $2, 'lesson_analysis', 'queued', 12, 'upload_video', $3::jsonb)
+    returning *
+  `, [video.lessonId, video.id, JSON.stringify(input)]);
+  return mapWorkflowRunRow(result.rows[0]);
+}
+
+async function updateWorkflowRunInput(workflowRunId: string, input: Record<string, unknown>) {
+  const result = await getPool().query(`
+    update workflow_runs
+    set input = input || $2::jsonb, updated_at = now()
+    where id = $1
+    returning *
+  `, [workflowRunId, JSON.stringify(input)]);
+  return mapWorkflowRunRow(result.rows[0]);
+}
+
+async function seedWorkflowSteps(workflowRunId: string) {
+  for (const step of workflowStepOptions) {
+    await getPool().query(`
+      insert into workflow_step_runs (workflow_run_id, step_key, status, progress)
+      values ($1, $2, 'waiting', 0)
+      on conflict (workflow_run_id, step_key) do nothing
+    `, [workflowRunId, step.key]);
+  }
+}
+
+async function listWorkflowSteps(workflowRunId: string): Promise<WorkflowStepRunRecord[]> {
+  const result = await getPool().query(`
+    select *
+    from workflow_step_runs
+    where workflow_run_id = $1
+  `, [workflowRunId]);
+  const byKey = new Map(result.rows.map((row) => [String(row.step_key), mapWorkflowStepRow(row)]));
+  return workflowStepOptions.map((step) => byKey.get(step.key) || emptyWorkflowStep(step.key, step.label));
+}
+
+async function updateWorkflowStepByVideo(videoId: string, stepKey: WorkflowStepKey, status: WorkflowStepStatus, progress: number) {
+  const result = await getPool().query(`
+    select id
+    from workflow_runs
+    where video_id = $1 and status not in ('completed', 'cancelled')
+    order by created_at desc
+    limit 1
+  `, [videoId]);
+  if (!result.rows[0]) return null;
+  return updateWorkflowStep({
+    workflowRunId: result.rows[0].id,
+    stepKey,
+    status,
+    progress
+  });
+}
+
+function mapWorkflowRunRow(row: Record<string, unknown>): WorkflowRunRecord {
+  return {
+    id: String(row.id),
+    lessonId: String(row.lesson_id),
+    videoId: String(row.video_id),
+    taskId: row.task_id == null ? null : String(row.task_id),
+    workflowType: String(row.workflow_type || "lesson_analysis"),
+    status: String(row.status || "queued") as WorkflowStatus,
+    progress: Number(row.progress || 0),
+    currentStep: row.current_step == null ? null : String(row.current_step) as WorkflowStepKey,
+    retryCount: Number(row.retry_count || 0),
+    errorMessage: row.error_message == null ? null : String(row.error_message),
+    input: parseJsonRecord(row.input),
+    output: parseJsonRecord(row.output),
+    lockedAt: row.locked_at == null ? null : toIsoString(row.locked_at),
+    lockedBy: row.locked_by == null ? null : String(row.locked_by),
+    startedAt: row.started_at == null ? null : toIsoString(row.started_at),
+    finishedAt: row.finished_at == null ? null : toIsoString(row.finished_at),
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at)
+  };
+}
+
+function mapWorkflowStepRow(row: Record<string, unknown>): WorkflowStepRunRecord {
+  const key = String(row.step_key) as WorkflowStepKey;
+  return {
+    id: String(row.id),
+    workflowRunId: String(row.workflow_run_id),
+    stepKey: key,
+    label: workflowStepOptions.find((step) => step.key === key)?.label || key,
+    status: String(row.status || "waiting") as WorkflowStepStatus,
+    progress: Number(row.progress || 0),
+    errorMessage: row.error_message == null ? null : String(row.error_message),
+    startedAt: row.started_at == null ? null : toIsoString(row.started_at),
+    finishedAt: row.finished_at == null ? null : toIsoString(row.finished_at),
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at)
+  };
+}
+
+function emptyWorkflowStep(stepKey: WorkflowStepKey, label: string): WorkflowStepRunRecord {
+  return {
+    id: `pending-${stepKey}`,
+    workflowRunId: "",
+    stepKey,
+    label,
+    status: "waiting",
+    progress: 0,
+    errorMessage: null,
+    startedAt: null,
+    finishedAt: null,
+    createdAt: "",
+    updatedAt: ""
+  };
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 function mapLessonVideoRow(row: Record<string, unknown>): LessonVideoRecord {

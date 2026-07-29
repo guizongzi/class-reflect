@@ -18,6 +18,24 @@ type UploadUrlResponse = {
 
 type UploadStep = "idle" | "creating" | "uploading" | "completed" | "failed";
 
+type WorkflowStepItem = {
+  stepKey: string;
+  label: string;
+  status: string;
+  progress: number;
+  errorMessage?: string | null;
+};
+
+type WorkflowStatusResponse = {
+  task: {
+    status: string;
+    currentStep?: string | null;
+    progress?: number | null;
+    errorMessage?: string | null;
+  } | null;
+  steps: WorkflowStepItem[];
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const defaultLessonFormat: LessonFormat = "offline_classroom_recording";
 
@@ -32,6 +50,8 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   const [audioProgress, setAudioProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState("请选择或拖入课堂视频。");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatusResponse | null>(null);
+  const [isWorkflowRefreshing, setIsWorkflowRefreshing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -43,6 +63,28 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    if (!activeLessonId) return;
+    let cancelled = false;
+    async function loadWorkflowStatus() {
+      setIsWorkflowRefreshing(true);
+      try {
+        const response = await getJson<WorkflowStatusResponse>(`/api/lessons/${activeLessonId}/status`);
+        if (!cancelled) setWorkflowStatus(response);
+      } catch {
+        if (!cancelled) setWorkflowStatus(null);
+      } finally {
+        if (!cancelled) setIsWorkflowRefreshing(false);
+      }
+    }
+    void loadWorkflowStatus();
+    const timer = window.setInterval(loadWorkflowStatus, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeLessonId]);
 
   async function handleFile(file: File) {
     if (!file.type.startsWith("video/")) {
@@ -97,6 +139,8 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
       await Promise.all([videoPipeline, audioPipeline]);
       setStep("completed");
       setStatusMessage("视频和音频都已上传到对象存储，后续 Worker 可以直接读取音频进入转写。");
+      const latestStatus = await getJson<WorkflowStatusResponse>(`/api/lessons/${ensuredLessonId}/status`);
+      setWorkflowStatus(latestStatus);
     } catch (error) {
       setStep("failed");
       setErrorMessage(error instanceof Error ? error.message : "上传失败");
@@ -207,8 +251,11 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
           </button>
         </section>
         <section className="assistant-card muted">
-          <strong>处理卡片</strong>
-          <span>视频上传与音频上传完成后，Worker 进入 ASR → 分段 → 证据 → 复核 → 报告。</span>
+          <div className="assistant-card-title">
+            <strong>处理卡片</strong>
+            <span>{isWorkflowRefreshing ? "刷新中" : formatWorkflowSummary(workflowStatus)}</span>
+          </div>
+          <WorkflowStepList steps={workflowStatus?.steps || []} />
         </section>
       </aside>
     </main>
@@ -244,6 +291,15 @@ async function postJson<T = unknown>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.message || payload?.error || "请求失败");
+  }
+  return payload as T;
+}
+
+async function getJson<T = unknown>(path: string): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(payload?.message || payload?.error || "请求失败");
@@ -351,6 +407,42 @@ function buildAssistantMessage(step: UploadStep) {
     completed: "上传链路已完成，下一步可以进入转写和课堂分段。",
     failed: "上传链路失败，请根据错误提示修正配置或重试。"
   }[step];
+}
+
+function WorkflowStepList({ steps }: { steps: WorkflowStepItem[] }) {
+  if (!steps.length) {
+    return <span>上传视频后，这里会显示可追踪的后台处理步骤。</span>;
+  }
+  return (
+    <ol className="workflow-step-list">
+      {steps.map((step) => (
+        <li className={`workflow-step ${step.status}`} key={step.stepKey}>
+          <span>{step.label || step.stepKey}</span>
+          <b>{formatWorkflowStepStatus(step.status, step.progress)}</b>
+          {step.errorMessage ? <small>{step.errorMessage}</small> : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function formatWorkflowSummary(status: WorkflowStatusResponse | null) {
+  if (!status?.task) return "等待上传";
+  if (status.task.errorMessage) return "处理失败";
+  return `${formatWorkflowStepStatus(status.task.status, status.task.progress || 0)} · ${status.task.currentStep || "未开始"}`;
+}
+
+function formatWorkflowStepStatus(status: string, progress?: number | null) {
+  return {
+    waiting: "等待",
+    queued: "排队中",
+    running: `${Math.max(0, Math.min(100, Math.round(progress || 0)))}%`,
+    waiting_for_human: "待复核",
+    completed: "完成",
+    failed: "失败",
+    skipped: "跳过",
+    cancelled: "已取消"
+  }[status] || status;
 }
 
 declare global {

@@ -17,7 +17,8 @@
     "@class-reflect/guardrails": "workspace:*",
     "@class-reflect/metrics": "workspace:*",
     "@class-reflect/observability": "workspace:*",
-    "@class-reflect/providers": "workspace:*"
+    "@class-reflect/providers": "workspace:*",
+    "@class-reflect/shared-types": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
