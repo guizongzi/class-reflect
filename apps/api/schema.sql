@@ -21,6 +21,10 @@ create table if not exists lesson_videos (
   file_name text not null,
   file_size bigint,
   mime_type text,
+  audio_bucket text,
+  audio_object_key text,
+  audio_mime_type text,
+  audio_upload_status text not null default 'not_requested',
   duration_seconds numeric,
   upload_status text not null default 'pending',
   processing_status text not null default 'queued',
@@ -28,6 +32,11 @@ create table if not exists lesson_videos (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table lesson_videos add column if not exists audio_bucket text;
+alter table lesson_videos add column if not exists audio_object_key text;
+alter table lesson_videos add column if not exists audio_mime_type text;
+alter table lesson_videos add column if not exists audio_upload_status text not null default 'not_requested';
 
 create table if not exists analysis_tasks (
   id uuid primary key default gen_random_uuid(),
