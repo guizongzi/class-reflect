@@ -1,5 +1,14 @@
 import { loadAppConfig } from "@class-reflect/config";
-import { workflowStepOptions, type WorkflowStatus, type WorkflowStepKey, type WorkflowStepStatus } from "@class-reflect/shared-types";
+import {
+  workflowStepOptions,
+  type ClassroomMetric,
+  type LessonFormat,
+  type TeachingEvidenceCard,
+  type TranscriptSegment,
+  type WorkflowStatus,
+  type WorkflowStepKey,
+  type WorkflowStepStatus
+} from "@class-reflect/shared-types";
 import { Pool } from "pg";
 
 export type RepositoryResult<T> = Promise<T>;
@@ -99,6 +108,15 @@ export type TranslationTargetRecord = {
   lessonId: string;
   originalText: string;
   translatedText: string | null;
+};
+
+export type TeachingEvidenceSourceRecord = {
+  lesson: {
+    id: string;
+    lessonFormat: LessonFormat;
+  };
+  transcriptSegments: TranscriptSegment[];
+  metrics: ClassroomMetric[];
 };
 
 let pool: Pool | null = null;
@@ -301,6 +319,97 @@ export async function getLessonRecord(lessonId: string): Promise<LessonDetailRec
     evidenceCards: evidenceCards.rows,
     reports: reports.rows
   };
+}
+
+export async function getTeachingEvidenceSource(input: {
+  lessonId: string;
+  videoId: string;
+}): Promise<TeachingEvidenceSourceRecord | null> {
+  const lessonResult = await getPool().query(`
+    select
+      id,
+      to_jsonb(lessons)->>'lesson_format' as lesson_format
+    from lessons
+    where id = $1
+  `, [input.lessonId]);
+  const lesson = lessonResult.rows[0];
+  if (!lesson) return null;
+
+  const segmentResult = await getPool().query(`
+    select
+      id,
+      start_ms,
+      end_ms,
+      speaker_label,
+      coalesce(raw_original_text, original_text, '') as text,
+      confidence
+    from transcript_segments
+    where lesson_id = $1 and video_id = $2
+    order by start_ms
+  `, [input.lessonId, input.videoId]);
+
+  return {
+    lesson: {
+      id: String(lesson.id),
+      lessonFormat: normalizeLessonFormat(lesson.lesson_format)
+    },
+    transcriptSegments: segmentResult.rows.map((row) => ({
+      id: String(row.id),
+      startMs: Number(row.start_ms || 0),
+      endMs: Number(row.end_ms || 0),
+      speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
+      text: String(row.text || ""),
+      confidence: row.confidence == null ? null : Number(row.confidence)
+    })),
+    metrics: []
+  };
+}
+
+export async function saveTeachingEvidenceCards(input: {
+  lessonId: string;
+  videoId: string;
+  cards: TeachingEvidenceCard[];
+  sourceModel: string;
+}): Promise<Array<Record<string, unknown>>> {
+  if (!input.cards.length) return [];
+
+  const rows: Array<Record<string, unknown>> = [];
+  for (const card of input.cards) {
+    const result = await getPool().query(`
+      insert into evidence_cards
+        (
+          lesson_id,
+          video_id,
+          evidence_type,
+          conclusion,
+          suggestion,
+          start_ms,
+          end_ms,
+          quote_text,
+          confidence_label,
+          review_status,
+          source_model,
+          raw_json
+        )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_review', $10, $11::jsonb)
+      returning *
+    `, [
+      input.lessonId,
+      input.videoId,
+      card.category,
+      `${card.title}\n${card.fact}\n${card.interpretation}`,
+      card.suggestion,
+      card.startMs,
+      card.endMs,
+      card.quote,
+      card.confidence,
+      input.sourceModel,
+      JSON.stringify(card)
+    ]);
+    rows.push(result.rows[0]);
+  }
+  await getPool().query("update lessons set updated_at = now() where id = $1", [input.lessonId]);
+  return rows;
 }
 
 export async function deleteLessonRecord(lessonId: string): Promise<boolean> {
@@ -830,6 +939,11 @@ function parseJsonRecord(value: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+function normalizeLessonFormat(value: unknown): LessonFormat {
+  if (value === "live_online_class" || value === "recorded_online_class" || value === "offline_classroom_recording") return value;
+  return "offline_classroom_recording";
 }
 
 function mapLessonVideoRow(row: Record<string, unknown>): LessonVideoRecord {
