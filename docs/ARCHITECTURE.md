@@ -104,6 +104,7 @@ AI 功能不应该全部塞进一个 `ai.js`。按职责拆：
 
 ```text
 web 选择视频
+→ web 确认课堂类型：线下课堂录像 / 直播网课 / 录播网课
 → api 创建 lesson 和 video 记录
 → api 生成 Cloudflare R2 预签名上传地址
 → web 直传视频到 R2 并显示上传进度

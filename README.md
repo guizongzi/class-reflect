@@ -13,6 +13,7 @@
 - 真实问题与用户场景说明。
 - 对话式任务发起和快捷复盘目标。
 - 课堂视频上传、对象存储持久保存、播放器预览。
+- 视频选择后确认课堂类型：线下课堂录像、直播网课或录播网课；该字段会写入数据库，供后续 AI Agent 选择分析维度。
 - 首页视频库，展示当前教师已有视频、处理状态、转写数量，并支持删除课堂记录。
 - 视频上传时并行尝试在浏览器生成 ASR 音频并上传；失败时 worker 会回退到从视频抽取音频。
 - 带时间轴的 ASR 逐字稿入库。
@@ -233,6 +234,15 @@ gcloud run jobs execute class-reflect-worker \
 ```
 
 执行后页面会通过 `/api/lessons/{lessonId}/status` 看到 workflow 步骤变化。后续可接 Cloud Scheduler、Cloud Tasks 或 Pub/Sub 自动触发 worker；M1 先把 API 与音频抽取/ASR 的运行单元解耦。
+
+如果数据库已存在，需要补充课堂类型字段：
+
+```sql
+alter table lessons add column if not exists lesson_format text not null default 'offline_classroom_recording';
+alter table lessons drop constraint if exists lessons_lesson_format_check;
+alter table lessons add constraint lessons_lesson_format_check
+  check (lesson_format in ('offline_classroom_recording', 'live_online_class', 'recorded_online_class'));
+```
 
 如果数据库之前已经初始化过，也需要重新运行一次：
 

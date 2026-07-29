@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api, putFile } from "./api/client";
-import type { EvidenceCardDto, LessonDetail, LessonListItem, LessonSectionDto, NormalizedSection, WorkflowStepDto } from "./api/types";
+import type { EvidenceCardDto, LessonDetail, LessonFormat, LessonListItem, LessonSectionDto, NormalizedSection, WorkflowStepDto } from "./api/types";
 import { extractWavFromMediaFile } from "./features/lesson-review/media";
-import { FLOW, clock, formatDate, normalizeSection, sectionTextForView, statusLabel, stepStatusName } from "./features/lesson-review/model";
+import { FLOW, LESSON_FORMAT_OPTIONS, clock, formatDate, lessonFormatLabel, normalizeSection, sectionTextForView, statusLabel, stepStatusName } from "./features/lesson-review/model";
 import "../styles.css";
 
 type View = "library" | "workspace";
@@ -17,6 +17,8 @@ function App() {
   const [library, setLibrary] = useState<LessonListItem[]>([]);
   const [libraryError, setLibraryError] = useState("");
   const [lessonId, setLessonId] = useState<string | null>(null);
+  const [lessonFormat, setLessonFormat] = useState<LessonFormat | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [videoId, setVideoId] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState("");
@@ -81,6 +83,8 @@ function App() {
   async function openLesson(id: string) {
     const lesson = await api<LessonDetail>(`/api/lessons/${id}`);
     setLessonId(id);
+    setLessonFormat(lesson.lesson?.lesson_format || null);
+    setPendingFile(null);
     setVideoId(lesson.video?.id || null);
     setFileName(lesson.video?.file_name || "");
     setProcessingStatus(lesson.lesson?.status === "ready" ? "ready" : (lesson.video?.processing_status as ProcessingStatus) || "idle");
@@ -91,7 +95,20 @@ function App() {
     setView("workspace");
   }
 
-  async function uploadVideo(file: File) {
+  function handleVideoSelected(file: File) {
+    setPendingFile(file);
+    setFileName(file.name);
+    setVideoUrl(URL.createObjectURL(file));
+    setLessonFormat(null);
+    setView("workspace");
+    setProcessingStatus("idle");
+    setError("");
+    setUploadProgress(0);
+    setAudioProgress(0);
+    setAudioStatus("idle");
+  }
+
+  async function uploadVideo(file: File, selectedFormat: LessonFormat) {
     try {
       setView("workspace");
       setFileName(file.name);
@@ -104,9 +121,15 @@ function App() {
 
       const lesson = await api<{ id: string }>("/api/lessons", {
         method: "POST",
-        body: { lesson_title: goal || "课堂视频复盘", course_title: "课堂复盘" }
+        body: {
+          lesson_title: goal || "课堂视频复盘",
+          course_title: "课堂复盘",
+          lesson_format: selectedFormat
+        }
       });
       setLessonId(lesson.id);
+      setLessonFormat(selectedFormat);
+      setPendingFile(null);
 
       const uploadInfo = await api<{ video_id: string; upload_url: string; headers?: Record<string, string> }>(
         `/api/lessons/${lesson.id}/videos/upload-url`,
@@ -267,7 +290,7 @@ function App() {
               <article className="lesson-row" key={lesson.id}>
                 <div>
                   <strong>{lesson.lesson_title || "课堂视频复盘"}</strong>
-                  <p>{lesson.file_name || "未上传视频"}</p>
+                  <p>{lesson.file_name || "未上传视频"} · {lessonFormatLabel(lesson.lesson_format)}</p>
                   <span>{formatDate(lesson.updated_at || lesson.created_at)} · {lesson.segment_count || 0} 条逐字稿 · {lesson.section_count || 0} 个课堂片段</span>
                 </div>
                 <div className="lesson-status">
@@ -287,10 +310,41 @@ function App() {
                 <h2>上传课堂视频后开始复盘</h2>
               </div>
               <label className="upload-button">
-                <input type="file" accept="video/*" onChange={(event) => event.target.files?.[0] && void uploadVideo(event.target.files[0])} />
+                <input type="file" accept="video/*" onChange={(event) => event.target.files?.[0] && handleVideoSelected(event.target.files[0])} />
                 <span>{fileName || "上传课堂视频"}</span>
               </label>
             </div>
+            {pendingFile && (
+              <section className="lesson-format-card" aria-label="选择课堂类型">
+                <div>
+                  <p className="section-kicker">课堂类型</p>
+                  <h2>这段视频属于哪一种课堂？</h2>
+                  <span>Agent 会按不同课堂形态选择分析维度。</span>
+                </div>
+                <div className="lesson-format-options">
+                  {LESSON_FORMAT_OPTIONS.map((option) => (
+                    <button
+                      className={`lesson-format-option ${lessonFormat === option.value ? "active" : ""}`}
+                      type="button"
+                      key={option.value}
+                      onClick={() => setLessonFormat(option.value)}
+                    >
+                      <strong>{option.label}</strong>
+                      <span>{option.description}</span>
+                      <em>{option.agentFocus}</em>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={!lessonFormat}
+                  onClick={() => lessonFormat && void uploadVideo(pendingFile, lessonFormat)}
+                >
+                  确认类型并开始上传
+                </button>
+              </section>
+            )}
             <div className="video-stage">
               {!videoUrl && (
                 <div className="upload-empty">
@@ -365,6 +419,8 @@ function App() {
                 <button type="submit" aria-label="发送">➜</button>
               </form>
               {goal ? <div className="message user"><p>{goal}</p></div> : <div className="message ai"><strong>Agent</strong><p>你想重点复盘什么问题？例如：提问后学生思考时间是否足够。</p></div>}
+              {lessonFormat && <ProcessCard title="课堂类型" value={lessonFormatLabel(lessonFormat)} note="后续 AI Agent 会按这个类型选择分析维度。" />}
+              {pendingFile && !lessonFormat && <ProcessCard title="等待确认课堂类型" value="请选择线下课堂录像、直播网课或录播网课" note="确认后才会正式上传并启动处理。" />}
               <ProcessCard title="处理过程" value={processingLabel(processingStatus, uploadProgress, audioStatus, audioProgress, audioError)} note="上传、对象存储、音频抽取、ASR 和写库都是后端真实状态。" steps={workflowSteps} />
               {sections.length > 0 && <ProcessCard title="中文翻译" value={translationStatus === "running" ? "正在生成中文翻译" : "按需生成"} note="英文或双语课堂需要时再生成；中文课可以不翻译。" action={<button className="primary-button inline-action" type="button" onClick={() => void translateLesson()}>生成中文翻译</button>} error={translationError} />}
               {sections.length > 0 && !evidenceCards.length && <ProcessCard title="基础记录已就绪" value={analysisStatus === "running" ? "正在运行多 Agent 分析" : "尚未运行真实 AI 教学分析"} note="将从已校订大段记录中拆出关键证据段落。" action={<button className="primary-button inline-action" type="button" onClick={() => void runAnalysis()}>开始多 Agent 分析</button>} error={analysisError} />}

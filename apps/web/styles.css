@@ -209,6 +209,58 @@ h1, h2, p { margin: 0; }
   background: #172235;
   box-shadow: var(--shadow);
 }
+.lesson-format-card {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 8px 24px rgba(20, 32, 51, 0.04);
+}
+.lesson-format-card > span,
+.lesson-format-card div > span {
+  display: block;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.lesson-format-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.lesson-format-option {
+  min-height: 132px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+}
+.lesson-format-option strong { font-size: 15px; }
+.lesson-format-option span {
+  color: #344054;
+  line-height: 1.6;
+}
+.lesson-format-option em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.lesson-format-option.active {
+  border-color: var(--green);
+  background: var(--green-soft);
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
+}
 .video-stage video {
   width: 100%;
   height: 100%;
@@ -543,6 +595,7 @@ h1, h2, p { margin: 0; }
   .main-layout { min-height: auto; }
   .evidence-workspace { padding: 14px; }
   .video-header, .record-header, .record-footer { align-items: stretch; flex-direction: column; }
+  .lesson-format-options { grid-template-columns: 1fr; }
   .video-stage, .video-stage video, .upload-empty { min-height: 260px; }
   .flow-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 14px; }
   .progress-card, .conversation, .assistant-input { padding-left: 14px; padding-right: 14px; }

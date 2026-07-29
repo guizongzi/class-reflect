@@ -161,6 +161,7 @@ function lessonPayload(lesson) {
   return {
     course_title: lesson.course_title,
     lesson_title: lesson.lesson_title,
+    lesson_format: lesson.lesson_format,
     grade: lesson.grade,
     subject: lesson.subject
   };

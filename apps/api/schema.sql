@@ -5,12 +5,18 @@ create table if not exists lessons (
   teacher_id text not null default 'demo-teacher',
   course_title text,
   lesson_title text not null,
+  lesson_format text not null default 'offline_classroom_recording',
   grade text,
   subject text,
   status text not null default 'created',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table lessons add column if not exists lesson_format text not null default 'offline_classroom_recording';
+alter table lessons drop constraint if exists lessons_lesson_format_check;
+alter table lessons add constraint lessons_lesson_format_check
+  check (lesson_format in ('offline_classroom_recording', 'live_online_class', 'recorded_online_class'));
 
 create table if not exists lesson_videos (
   id uuid primary key default gen_random_uuid(),

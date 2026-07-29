@@ -70,15 +70,20 @@ app.post("/api/lessons", async (req, res, next) => {
     const {
       course_title = "五年级数学",
       lesson_title = "分数的意义和分数单位",
+      lesson_format = "offline_classroom_recording",
       grade = "五年级",
       subject = "数学"
     } = req.body || {};
+    const allowedLessonFormats = ["offline_classroom_recording", "live_online_class", "recorded_online_class"];
+    if (!allowedLessonFormats.includes(lesson_format)) {
+      return res.status(400).json({ error: "lesson_format is invalid" });
+    }
     const teacherId = await getTeacherId(req);
     const result = await query(`
-      insert into lessons (teacher_id, course_title, lesson_title, grade, subject)
-      values ($1, $2, $3, $4, $5)
+      insert into lessons (teacher_id, course_title, lesson_title, lesson_format, grade, subject)
+      values ($1, $2, $3, $4, $5, $6)
       returning *
-    `, [teacherId, course_title, lesson_title, grade, subject]);
+    `, [teacherId, course_title, lesson_title, lesson_format, grade, subject]);
     res.status(201).json(result.rows[0]);
   } catch (error) {
     next(error);

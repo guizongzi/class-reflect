@@ -1,4 +1,11 @@
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class LessonFormat(StrEnum):
+    OFFLINE_CLASSROOM_RECORDING = "offline_classroom_recording"
+    LIVE_ONLINE_CLASS = "live_online_class"
+    RECORDED_ONLINE_CLASS = "recorded_online_class"
 
 
 @dataclass(frozen=True)
@@ -19,4 +26,3 @@ class LessonSection:
     summary_text: str
     confidence_label: str
     tags: list[str]
-

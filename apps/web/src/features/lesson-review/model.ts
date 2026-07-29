@@ -1,6 +1,31 @@
-import type { LessonListItem, LessonSectionDto, NormalizedSection, TranscriptSegmentDto } from "../../api/types";
+import type { LessonFormat, LessonListItem, LessonSectionDto, NormalizedSection, TranscriptSegmentDto } from "../../api/types";
 
 export const FLOW = ["对话发起", "处理过程", "校订原文", "核对证据", "人工复核", "生成报告"];
+
+export const LESSON_FORMAT_OPTIONS: Array<{ value: LessonFormat; label: string; description: string; agentFocus: string }> = [
+  {
+    value: "offline_classroom_recording",
+    label: "线下课堂录像",
+    description: "真实教室中的课堂录制。",
+    agentFocus: "重点看等待时间、师生问答、课堂节奏和活动转换。"
+  },
+  {
+    value: "live_online_class",
+    label: "直播网课",
+    description: "实时在线授课，有直播互动。",
+    agentFocus: "重点看互动延迟、点名回应、屏幕讲解节奏和线上参与感。"
+  },
+  {
+    value: "recorded_online_class",
+    label: "录播网课",
+    description: "预先录制的教学视频。",
+    agentFocus: "重点看讲解结构、停顿设计、指令清晰度和自学友好度。"
+  }
+];
+
+export function lessonFormatLabel(value?: LessonFormat): string {
+  return LESSON_FORMAT_OPTIONS.find((item) => item.value === value)?.label || "未选择类型";
+}
 
 export function normalizeSection(
   section: LessonSectionDto,
@@ -79,4 +104,3 @@ function formatBilingualSegments(segments: TranscriptSegmentDto[]): string {
     })
     .join("\n\n");
 }
-

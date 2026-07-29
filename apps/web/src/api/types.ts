@@ -1,6 +1,7 @@
 export type LessonListItem = {
   id: string;
   lesson_title?: string;
+  lesson_format?: LessonFormat;
   file_name?: string;
   updated_at?: string;
   created_at?: string;
@@ -14,6 +15,8 @@ export type LessonListItem = {
   status?: string;
   upload_status?: string;
 };
+
+export type LessonFormat = "offline_classroom_recording" | "live_online_class" | "recorded_online_class";
 
 export type LessonSectionDto = {
   id: string;
@@ -56,7 +59,7 @@ export type WorkflowStepDto = {
 };
 
 export type LessonDetail = {
-  lesson: { id: string; status?: string; lesson_title?: string };
+  lesson: { id: string; status?: string; lesson_title?: string; lesson_format?: LessonFormat };
   video?: { id: string; file_name?: string; processing_status?: string; error_message?: string };
   playback_url?: string;
   sections: LessonSectionDto[];
@@ -75,4 +78,3 @@ export type NormalizedSection = {
   tags: string[];
   reviewStatus: string;
 };
-
