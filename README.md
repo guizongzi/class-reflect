@@ -118,24 +118,59 @@ gcloud artifacts repositories create class-reflect \
   --location=asia-southeast1
 ```
 
-3. 在 Secret Manager 创建密钥：
+3. 在 Secret Manager 创建一个密钥：`APP_CONFIG_ENV`。
 
-```text
-DATABASE_URL
-DIRECT_URL
-SUPABASE_URL
-SUPABASE_ANON_KEY
-SUPABASE_SERVICE_ROLE_KEY
-R2_ACCOUNT_ID
-R2_ENDPOINT
-R2_BUCKET
-R2_ACCESS_KEY_ID
-R2_SECRET_ACCESS_KEY
-ALIYUN_DASHSCOPE_API_KEY
-LLM_BASE_URL
-LLM_API_KEY
-LLM_MODEL
-FRONTEND_ORIGIN
+推荐内容是一个 JSON 对象。可以使用平铺环境变量名：
+
+```json
+{
+  "DATABASE_URL": "postgres://...",
+  "DIRECT_URL": "postgres://...",
+  "SUPABASE_URL": "https://你的项目.supabase.co",
+  "SUPABASE_ANON_KEY": "...",
+  "SUPABASE_SERVICE_ROLE_KEY": "...",
+  "R2_ACCOUNT_ID": "...",
+  "R2_ENDPOINT": "https://你的账号ID.r2.cloudflarestorage.com",
+  "R2_BUCKET": "你的 bucket",
+  "R2_ACCESS_KEY_ID": "...",
+  "R2_SECRET_ACCESS_KEY": "...",
+  "ALIYUN_DASHSCOPE_API_KEY": "...",
+  "LLM_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "LLM_API_KEY": "...",
+  "LLM_MODEL": "qwen-plus",
+  "FRONTEND_ORIGIN": "https://你的前端域名"
+}
+```
+
+也可以使用分组对象：
+
+```json
+{
+  "databaseUrl": "postgres://...",
+  "directUrl": "postgres://...",
+  "frontendOrigin": "https://你的前端域名",
+  "supabase": {
+    "url": "https://你的项目.supabase.co",
+    "anonKey": "...",
+    "serviceRoleKey": "..."
+  },
+  "r2": {
+    "accountId": "...",
+    "endpoint": "https://你的账号ID.r2.cloudflarestorage.com",
+    "bucket": "你的 bucket",
+    "accessKeyId": "...",
+    "secretAccessKey": "..."
+  },
+  "aliyun": {
+    "dashscopeApiKey": "...",
+    "asrModel": "qwen3-asr-flash-filetrans"
+  },
+  "llm": {
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "apiKey": "...",
+    "model": "qwen-plus"
+  }
+}
 ```
 
 4. 用 Cloud Build 构建和部署：
@@ -144,7 +179,11 @@ FRONTEND_ORIGIN
 gcloud builds submit --config cloudbuild.yaml
 ```
 
-5. 部署后在 Cloud Run 的 Variables & Secrets 里把上面的 Secret 逐个绑定为环境变量。
+5. 部署后确认 Cloud Run 的 Variables & Secrets 中已绑定：
+
+```text
+APP_CONFIG_ENV=APP_CONFIG_ENV:latest
+```
 
 6. 打开健康检查：
 
