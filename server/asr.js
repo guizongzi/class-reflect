@@ -52,8 +52,7 @@ async function waitForAliyunTranscription(taskId) {
     const response = await requestJson(`${trimTrailingSlash(config.aliyun.asrBaseUrl)}/tasks/${taskId}`, {
       headers: {
         Authorization: `Bearer ${config.aliyun.dashscopeApiKey}`,
-        "Content-Type": "application/json",
-        "X-DashScope-Async": "enable"
+        "Content-Type": "application/json"
       }
     });
     const output = response.output || {};
