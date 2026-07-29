@@ -193,9 +193,9 @@ function renderRecord() {
 function renderVideoMeta() {
   els.videoName.textContent = state.videoName ? "更换视频" : "上传课堂视频";
   if (state.backendMode && state.uploadProgress > 0 && state.uploadProgress < 100) {
-    els.lessonTitle.textContent = `正在直传阿里云 OSS：${state.uploadProgress}%`;
+    els.lessonTitle.textContent = `正在直传 Cloudflare R2：${state.uploadProgress}%`;
   } else if (state.backendMode && state.uploadProgress === 100) {
-    els.lessonTitle.textContent = "视频已进入阿里云 OSS，后端正在处理";
+    els.lessonTitle.textContent = "视频已进入 Cloudflare R2，后端正在处理";
   } else {
     els.lessonTitle.textContent = state.videoName || "上传课堂视频后开始复盘";
   }
@@ -434,7 +434,7 @@ function putFileWithProgress(url, file, headers, onProgress) {
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error(`OSS 上传失败：${xhr.status}`));
+      else reject(new Error(`R2 上传失败：${xhr.status}`));
     };
     xhr.onerror = () => reject(new Error("无法连接对象存储上传地址"));
     xhr.send(file);
