@@ -295,7 +295,8 @@ h1, h2, p { margin: 0; }
   color: var(--muted);
 }
 .record-tab.active { color: var(--green); background: var(--green-soft); border-color: #b7dfcc; }
-#recordEditor {
+#recordEditor,
+.record-card textarea {
   width: 100%;
   min-height: 180px;
   resize: vertical;
@@ -307,7 +308,8 @@ h1, h2, p { margin: 0; }
   color: var(--text);
   background: #fff;
 }
-#recordEditor:disabled { color: var(--muted); background: #f8faf8; }
+#recordEditor:disabled,
+.record-card textarea:disabled { color: var(--muted); background: #f8faf8; }
 .record-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
 #saveStatus { color: var(--muted); font-size: 13px; }
 

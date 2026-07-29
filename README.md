@@ -6,6 +6,8 @@
 
 后续任何功能扩展都以 [docs/ARCHITECTURE_BASELINE.md](docs/ARCHITECTURE_BASELINE.md) 为标杆。新增代码必须先判断属于前端、API、Agent Orchestrator、Worker、Pipeline、Integration、Domain、Database 或 Infrastructure 哪一层；不要为了临时跑通把业务判断、AI 调用、云服务 SDK、数据库写入和页面状态混在同一个文件里。
 
+当前技术迁移原则：不可维护、不可持续的骨架要换；已经稳定且方便维护的平台先保留。前端目标骨架为 React + TypeScript，后端目标骨架为 Python FastAPI；Supabase、Cloudflare R2、Google Cloud Run、阿里云 ASR/LLM 暂时不迁移。
+
 ## 已完成范围
 
 - 真实问题与用户场景说明。
@@ -42,15 +44,20 @@
 
 ## 本地运行
 
-直接打开 `apps/web/index.html` 即可预览前端界面。
-
-如需用本地服务预览：
+前端目标骨架已经迁入 React + TypeScript + Vite。开发时运行：
 
 ```bash
-python3 -m http.server 8080 --directory apps/web
+npm install
+npm run web:dev
 ```
 
-然后访问：
+生产构建：
+
+```bash
+npm run web:build
+```
+
+旧版原生 HTML/JS 不再作为长期主骨架。
 
 ```text
 http://localhost:8080

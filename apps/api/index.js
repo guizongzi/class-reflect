@@ -1,4 +1,5 @@
 import express from "express";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config, assertRuntimeConfig } from "./config.js";
@@ -13,7 +14,9 @@ assertRuntimeConfig();
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const webDir = path.resolve(__dirname, "../web");
+const builtWebDir = path.resolve(__dirname, "../web/dist");
+const legacyWebDir = path.resolve(__dirname, "../web");
+const webDir = existsSync(path.join(builtWebDir, "index.html")) ? builtWebDir : legacyWebDir;
 
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", config.frontendOrigin);
@@ -716,6 +719,11 @@ app.get("/api/reports/:reportId/markdown", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api/")) return next();
+  return res.sendFile(path.join(webDir, "index.html"));
 });
 
 app.use((error, req, res, next) => {

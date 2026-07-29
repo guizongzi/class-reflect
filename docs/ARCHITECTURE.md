@@ -4,6 +4,14 @@
 
 本项目的长期架构标杆是 [ARCHITECTURE_BASELINE.md](ARCHITECTURE_BASELINE.md)。当现有实现和标杆冲突时，除 Supabase、Cloudflare R2、Google Cloud Run、阿里云 ASR/LLM 等当前已定平台外，默认以标杆为准，并通过小步重构让 M1 逐步靠近标杆；不再新增临时逻辑文件。
 
+技术选型遵循一个现实原则：不可维护、不可持续的骨架要换；已经跑通且方便维护的平台先保留。当前项目确定为：
+
+- 前端目标骨架：React + TypeScript + Vite。
+- 后端目标骨架：Python FastAPI。
+- 后台任务目标骨架：Python Worker，由 Agent Orchestrator 分配 Pipeline。
+- 暂时保留的平台：Supabase PostgreSQL、Cloudflare R2、Google Cloud Run、Cloud Build、阿里云 ASR/LLM。
+- 当前 Node/Express 后端：作为已跑通链路的 parity source，迁移期间只修必要问题，不继续扩张为长期架构。
+
 ## 目录
 
 ```text
