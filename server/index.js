@@ -3,8 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config, assertRuntimeConfig } from "./config.js";
 import { query, withTransaction } from "./db.js";
-import { assertObjectExists, createReadUrl, createUploadUrl, videoObjectKey } from "./storage.js";
+import { assertObjectExists, createReadUrl, createUploadUrl, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
 import { enqueueVideoProcessing } from "./processor.js";
+import { assertLessonOwner, getTeacherId } from "./auth.js";
 
 assertRuntimeConfig();
 
@@ -31,11 +32,12 @@ app.post("/api/lessons", async (req, res, next) => {
       grade = "五年级",
       subject = "数学"
     } = req.body || {};
+    const teacherId = await getTeacherId(req);
     const result = await query(`
-      insert into lessons (course_title, lesson_title, grade, subject)
-      values ($1, $2, $3, $4)
+      insert into lessons (teacher_id, course_title, lesson_title, grade, subject)
+      values ($1, $2, $3, $4, $5)
       returning *
-    `, [course_title, lesson_title, grade, subject]);
+    `, [teacherId, course_title, lesson_title, grade, subject]);
     res.status(201).json(result.rows[0]);
   } catch (error) {
     next(error);
@@ -44,20 +46,21 @@ app.post("/api/lessons", async (req, res, next) => {
 
 app.post("/api/lessons/:lessonId/videos/upload-url", async (req, res, next) => {
   try {
-    const teacherId = req.header("x-teacher-id") || "demo-teacher";
+    const teacherId = await getTeacherId(req);
     const { file_name, file_size, mime_type } = req.body || {};
     if (!file_name) return res.status(400).json({ error: "file_name is required" });
 
     const video = await withTransaction(async (client) => {
       const lesson = await client.query("select * from lessons where id = $1", [req.params.lessonId]);
       if (!lesson.rows[0]) throw Object.assign(new Error("lesson not found"), { status: 404 });
+      assertLessonOwner(lesson.rows[0], teacherId);
 
       const created = await client.query(`
         insert into lesson_videos
           (lesson_id, teacher_id, bucket, object_key, file_name, file_size, mime_type)
         values ($1, $2, $3, 'pending', $4, $5, $6)
         returning *
-      `, [req.params.lessonId, teacherId, config.s3.bucket, file_name, file_size || null, mime_type || null]);
+      `, [req.params.lessonId, teacherId, config.r2.bucket, file_name, file_size || null, mime_type || null]);
       const videoId = created.rows[0].id;
       const objectKey = videoObjectKey({ teacherId, lessonId: req.params.lessonId, videoId, fileName: file_name });
       const updated = await client.query(`
@@ -86,6 +89,8 @@ app.post("/api/videos/:videoId/complete-upload", async (req, res, next) => {
     const videoResult = await query("select * from lesson_videos where id = $1", [req.params.videoId]);
     const video = videoResult.rows[0];
     if (!video) return res.status(404).json({ error: "video not found" });
+    const teacherId = await getTeacherId(req);
+    if (video.teacher_id !== teacherId) return res.status(403).json({ error: "无权访问该视频" });
 
     await assertObjectExists(video.object_key);
     const task = await withTransaction(async (client) => {
@@ -113,6 +118,8 @@ app.post("/api/videos/:videoId/complete-upload", async (req, res, next) => {
 app.get("/api/lessons/:lessonId/status", async (req, res, next) => {
   try {
     const lesson = await query("select * from lessons where id = $1", [req.params.lessonId]);
+    const teacherId = await getTeacherId(req);
+    if (lesson.rows[0]) assertLessonOwner(lesson.rows[0], teacherId);
     const task = await query(`
       select * from analysis_tasks
       where lesson_id = $1
@@ -133,6 +140,8 @@ app.get("/api/lessons/:lessonId", async (req, res, next) => {
   try {
     const lesson = (await query("select * from lessons where id = $1", [req.params.lessonId])).rows[0];
     if (!lesson) return res.status(404).json({ error: "lesson not found" });
+    const teacherId = await getTeacherId(req);
+    assertLessonOwner(lesson, teacherId);
 
     const videos = (await query("select * from lesson_videos where lesson_id = $1 order by created_at desc", [lesson.id])).rows;
     const video = videos[0] || null;
@@ -150,14 +159,15 @@ app.get("/api/lessons/:lessonId", async (req, res, next) => {
 app.patch("/api/sections/:sectionId", async (req, res, next) => {
   try {
     const { edited_summary_text, tags } = req.body || {};
+    const teacherId = await getTeacherId(req);
     const result = await query(`
       update lesson_sections
       set edited_summary_text = coalesce($2, edited_summary_text),
           tags = coalesce($3, tags),
           updated_at = now()
-      where id = $1
+      where id = $1 and lesson_id in (select id from lessons where teacher_id = $4)
       returning *
-    `, [req.params.sectionId, edited_summary_text || null, tags ? JSON.stringify(tags) : null]);
+    `, [req.params.sectionId, edited_summary_text || null, tags ? JSON.stringify(tags) : null, teacherId]);
     res.json(result.rows[0]);
   } catch (error) {
     next(error);
@@ -167,15 +177,16 @@ app.patch("/api/sections/:sectionId", async (req, res, next) => {
 app.patch("/api/evidence-cards/:cardId/review", async (req, res, next) => {
   try {
     const { review_status, edited_conclusion, teacher_note } = req.body || {};
+    const teacherId = await getTeacherId(req);
     const result = await query(`
       update evidence_cards
       set review_status = coalesce($2, review_status),
           edited_conclusion = coalesce($3, edited_conclusion),
           teacher_note = coalesce($4, teacher_note),
           updated_at = now()
-      where id = $1
+      where id = $1 and lesson_id in (select id from lessons where teacher_id = $5)
       returning *
-    `, [req.params.cardId, review_status || null, edited_conclusion || null, teacher_note || null]);
+    `, [req.params.cardId, review_status || null, edited_conclusion || null, teacher_note || null, teacherId]);
     res.json(result.rows[0]);
   } catch (error) {
     next(error);
@@ -189,13 +200,21 @@ app.post("/api/lessons/:lessonId/reports", async (req, res, next) => {
       where lesson_id = $1 and review_status in ('已接受', '已修改')
       order by start_ms
     `, [req.params.lessonId])).rows;
+    const lesson = (await query("select * from lessons where id = $1", [req.params.lessonId])).rows[0];
+    if (!lesson) return res.status(404).json({ error: "lesson not found" });
+    const teacherId = await getTeacherId(req);
+    assertLessonOwner(lesson, teacherId);
     const markdown = buildMarkdownReport(cards);
     const result = await query(`
       insert into reports (lesson_id, markdown_content, generated_from)
       values ($1, $2, $3)
       returning *
     `, [req.params.lessonId, markdown, JSON.stringify(cards.map((card) => card.id))]);
-    res.status(201).json(result.rows[0]);
+    const report = result.rows[0];
+    const objectKey = reportObjectKey({ teacherId, lessonId: req.params.lessonId, reportId: report.id });
+    await uploadText(objectKey, markdown, "text/markdown;charset=utf-8");
+    const updated = await query("update reports set export_object_key = $2 where id = $1 returning *", [report.id, objectKey]);
+    res.status(201).json(updated.rows[0]);
   } catch (error) {
     next(error);
   }
