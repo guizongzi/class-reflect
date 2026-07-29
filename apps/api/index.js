@@ -95,6 +95,10 @@ app.get("/api/lessons", async (req, res, next) => {
         v.processing_status,
         v.error_message,
         v.audio_upload_status,
+        wf.status as workflow_status,
+        wf.current_step as workflow_current_step,
+        wf.progress as workflow_progress,
+        wf.error_message as workflow_error_message,
         v.created_at as video_created_at,
         coalesce(section_counts.section_count, 0) as section_count,
         coalesce(segment_counts.segment_count, 0) as segment_count
@@ -106,6 +110,13 @@ app.get("/api/lessons", async (req, res, next) => {
         order by created_at desc
         limit 1
       ) v on true
+      left join lateral (
+        select *
+        from workflow_runs
+        where lesson_id = l.id
+        order by created_at desc
+        limit 1
+      ) wf on true
       left join lateral (
         select count(*)::int as section_count
         from lesson_sections
@@ -330,7 +341,12 @@ app.post("/api/videos/:videoId/retry-processing", async (req, res, next) => {
       return { task: created.rows[0], workflow };
     });
 
-    res.status(202).json({ task_id: task.task.id, workflow_run_id: task.workflow.id, status: task.task.status });
+    res.status(202).json({
+      task_id: task.task.id,
+      workflow_run_id: task.workflow.id,
+      status: task.task.status,
+      resume_from: resumeStepForVideo(video)
+    });
   } catch (error) {
     next(error);
   }
@@ -363,7 +379,8 @@ app.get("/api/lessons/:lessonId/status", async (req, res, next) => {
       lesson: lesson.rows[0] || null,
       task: task.rows[0] || null,
       workflow: workflow.rows[0] || null,
-      steps: makeStepStatus(task.rows[0], workflowSteps.rows)
+      steps: makeStepStatus(task.rows[0], workflow.rows[0], workflowSteps.rows),
+      resume: makeResumeState({ lesson: lesson.rows[0], task: task.rows[0], workflow: workflow.rows[0] })
     });
   } catch (error) {
     next(error);
@@ -392,16 +409,30 @@ app.get("/api/lessons/:lessonId", async (req, res, next) => {
 
 app.patch("/api/sections/:sectionId", async (req, res, next) => {
   try {
-    const { edited_summary_text, tags } = req.body || {};
+    const { edited_summary_text, tags, review_status = "已校订" } = req.body || {};
     const teacherId = await getTeacherId(req);
+    const hasText = Object.prototype.hasOwnProperty.call(req.body || {}, "edited_summary_text");
+    const hasTags = Object.prototype.hasOwnProperty.call(req.body || {}, "tags");
     const result = await query(`
       update lesson_sections
-      set edited_summary_text = coalesce($2, edited_summary_text),
-          tags = coalesce($3, tags),
+      set edited_summary_text = case when $2 then $3 else edited_summary_text end,
+          tags = case when $4 then $5 else tags end,
+          review_status = $6,
+          reviewed_at = now(),
+          reviewer_id = $7,
           updated_at = now()
-      where id = $1 and lesson_id in (select id from lessons where teacher_id = $4)
+      where id = $1 and lesson_id in (select id from lessons where teacher_id = $7)
       returning *
-    `, [req.params.sectionId, edited_summary_text || null, tags ? JSON.stringify(tags) : null, teacherId]);
+    `, [
+      req.params.sectionId,
+      hasText,
+      hasText ? String(edited_summary_text || "") : null,
+      hasTags,
+      hasTags ? JSON.stringify(Array.isArray(tags) ? tags : []) : null,
+      review_status,
+      teacherId
+    ]);
+    if (!result.rows[0]) return res.status(404).json({ error: "lesson section not found" });
     res.json(result.rows[0]);
   } catch (error) {
     next(error);
@@ -608,14 +639,46 @@ async function createQueuedWorkflowRun(client, { lessonId, videoId, taskId, retr
   return created.rows[0];
 }
 
-function makeStepStatus(task, workflowSteps = []) {
+function makeStepStatus(task, workflow, workflowSteps = []) {
   const order = LESSON_ANALYSIS_STEPS;
-  const workflowByKey = new Map(workflowSteps.map((step) => [step.step_key, step.status]));
+  const workflowByKey = new Map(workflowSteps.map((step) => [step.step_key, step]));
+  const currentStep = workflow?.current_step || task?.current_step;
   return order.map((key) => ({
     key,
-    status: workflowByKey.get(key) ||
-      (!task ? "waiting" : task.current_step === key ? "running" : order.indexOf(key) < order.indexOf(task.current_step) || task.status === "completed" ? "completed" : "waiting")
+    label: stepLabel(key),
+    status: workflowByKey.get(key)?.status ||
+      (!task ? "waiting" : currentStep === key ? task.status : order.indexOf(key) < order.indexOf(currentStep) || task.status === "completed" ? "completed" : "waiting"),
+    progress: workflowByKey.get(key)?.progress || 0,
+    error_message: workflowByKey.get(key)?.error_message || null
   }));
+}
+
+function makeResumeState({ lesson, task, workflow }) {
+  const failed = task?.status === "failed" || workflow?.status === "failed" || lesson?.status === "failed";
+  return {
+    can_retry: Boolean(failed),
+    retry_label: failed ? `从「${stepLabel(workflow?.current_step || task?.current_step || "verify_upload")}」继续处理` : null,
+    failed_step: workflow?.current_step || task?.current_step || null
+  };
+}
+
+function resumeStepForVideo(video) {
+  if (video.audio_upload_status === "uploaded") return "asr";
+  if (video.upload_status === "uploaded") return "extract_audio";
+  return "verify_upload";
+}
+
+function stepLabel(key) {
+  return {
+    verify_upload: "校验上传",
+    download_video: "读取视频",
+    extract_audio: "抽取音频",
+    upload_audio: "保存音频",
+    asr: "语音转文字",
+    build_sections: "生成大段记录",
+    write_transcript: "写入数据库",
+    completed: "完成"
+  }[key] || key || "等待";
 }
 
 function buildMarkdownReport(cards) {
