@@ -1,34 +1,17 @@
-import fs from "node:fs";
-import OpenAI from "openai";
 import { config } from "./config.js";
 
 export async function transcribeAudio(audioPath) {
-  if (config.asrProvider === "openai") {
-    return transcribeWithOpenAI(audioPath);
+  if (config.asrProvider === "aliyun") {
+    return transcribeWithAliyun(audioPath);
   }
   return mockTranscript();
 }
 
-async function transcribeWithOpenAI(audioPath) {
-  if (!config.openaiApiKey) {
-    throw new Error("OPENAI_API_KEY is required when ASR_PROVIDER=openai");
+async function transcribeWithAliyun(audioPath) {
+  if (!config.aliyun.asrAppKey || !config.aliyun.accessKeyId || !config.aliyun.accessKeySecret) {
+    throw new Error("ALIYUN_ASR_APP_KEY, ALIYUN_ACCESS_KEY_ID and ALIYUN_ACCESS_KEY_SECRET are required when ASR_PROVIDER=aliyun");
   }
-  const client = new OpenAI({ apiKey: config.openaiApiKey });
-  const transcription = await client.audio.transcriptions.create({
-    file: fs.createReadStream(audioPath),
-    model: config.openaiTranscribeModel,
-    response_format: "verbose_json",
-    timestamp_granularities: ["segment"]
-  });
-  const segments = transcription.segments || [];
-  return segments.map((segment, index) => ({
-    startMs: Math.round((segment.start || index * 30) * 1000),
-    endMs: Math.round((segment.end || index * 30 + 25) * 1000),
-    speakerLabel: guessSpeaker(segment.text),
-    originalText: segment.text?.trim() || "",
-    translatedText: null,
-    confidence: null
-  })).filter((segment) => segment.originalText);
+  throw new Error("阿里云 ASR 接入点已预留，第一版本地演示请先使用 ASR_PROVIDER=mock");
 }
 
 function mockTranscript() {
@@ -46,9 +29,4 @@ function mockTranscript() {
     translatedText: null,
     confidence: 0.92
   }));
-}
-
-function guessSpeaker(text = "") {
-  if (/老师|请大家|想一想|同学/.test(text)) return "教师";
-  return "未知";
 }
