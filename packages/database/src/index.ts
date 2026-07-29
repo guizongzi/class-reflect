@@ -259,6 +259,128 @@ export async function deleteLessonRecord(lessonId: string): Promise<boolean> {
   return (result.rowCount || 0) > 0;
 }
 
+export type LessonVideoRecord = {
+  id: string;
+  lessonId: string;
+  bucket: string;
+  objectKey: string;
+  fileName: string;
+  fileSize: number | null;
+  mimeType: string | null;
+  audioBucket: string | null;
+  audioObjectKey: string | null;
+  audioMimeType: string | null;
+  audioUploadStatus: string;
+  uploadStatus: string;
+  processingStatus: string;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function createLessonVideoRecord(input: {
+  lessonId: string;
+  fileName: string;
+  fileSize?: number;
+  mimeType?: string;
+}): Promise<LessonVideoRecord> {
+  const config = loadAppConfig();
+  const result = await getPool().query(`
+    insert into lesson_videos (
+      lesson_id,
+      teacher_id,
+      bucket,
+      object_key,
+      file_name,
+      file_size,
+      mime_type,
+      upload_status,
+      processing_status
+    )
+    values ($1, $2, $3, $4, $5, $6, $7, 'pending', 'created')
+    returning *
+  `, [
+    input.lessonId,
+    "demo-teacher",
+    config.r2Bucket || "",
+    "pending",
+    input.fileName,
+    input.fileSize || null,
+    input.mimeType || null
+  ]);
+
+  return mapLessonVideoRow(result.rows[0]);
+}
+
+export async function updateLessonVideoObjectKey(input: { videoId: string; objectKey: string }): Promise<LessonVideoRecord | null> {
+  const result = await getPool().query(`
+    update lesson_videos
+    set object_key = $2, updated_at = now()
+    where id = $1
+    returning *
+  `, [input.videoId, input.objectKey]);
+  return result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+}
+
+export async function getLessonVideoRecord(videoId: string): Promise<LessonVideoRecord | null> {
+  const result = await getPool().query("select * from lesson_videos where id = $1", [videoId]);
+  return result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+}
+
+export async function markLessonVideoUploaded(videoId: string): Promise<LessonVideoRecord | null> {
+  const result = await getPool().query(`
+    update lesson_videos
+    set
+      upload_status = 'uploaded',
+      processing_status = case
+        when audio_upload_status = 'uploaded' then 'queued'
+        else processing_status
+      end,
+      updated_at = now()
+    where id = $1
+    returning *
+  `, [videoId]);
+  await touchLessonForVideo(videoId);
+  return result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+}
+
+export async function setLessonVideoAudioObject(input: {
+  videoId: string;
+  audioObjectKey: string;
+  audioMimeType: string;
+}): Promise<LessonVideoRecord | null> {
+  const config = loadAppConfig();
+  const result = await getPool().query(`
+    update lesson_videos
+    set
+      audio_bucket = $2,
+      audio_object_key = $3,
+      audio_mime_type = $4,
+      audio_upload_status = 'pending',
+      updated_at = now()
+    where id = $1
+    returning *
+  `, [input.videoId, config.r2Bucket || "", input.audioObjectKey, input.audioMimeType]);
+  return result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+}
+
+export async function markLessonVideoAudioUploaded(videoId: string): Promise<LessonVideoRecord | null> {
+  const result = await getPool().query(`
+    update lesson_videos
+    set
+      audio_upload_status = 'uploaded',
+      processing_status = case
+        when upload_status = 'uploaded' then 'queued'
+        else processing_status
+      end,
+      updated_at = now()
+    where id = $1
+    returning *
+  `, [videoId]);
+  await touchLessonForVideo(videoId);
+  return result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+}
+
 async function getLessonColumns() {
   if (lessonColumnCache) return lessonColumnCache;
   const result = await getPool().query(`
@@ -277,4 +399,33 @@ function addColumn(entries: Array<[string, unknown]>, columns: Set<string>, colu
 function toIsoString(value: unknown) {
   if (value instanceof Date) return value.toISOString();
   return String(value || "");
+}
+
+async function touchLessonForVideo(videoId: string) {
+  await getPool().query(`
+    update lessons
+    set updated_at = now()
+    where id = (select lesson_id from lesson_videos where id = $1)
+  `, [videoId]);
+}
+
+function mapLessonVideoRow(row: Record<string, unknown>): LessonVideoRecord {
+  return {
+    id: String(row.id),
+    lessonId: String(row.lesson_id),
+    bucket: String(row.bucket || ""),
+    objectKey: String(row.object_key || ""),
+    fileName: String(row.file_name || ""),
+    fileSize: row.file_size == null ? null : Number(row.file_size),
+    mimeType: row.mime_type == null ? null : String(row.mime_type),
+    audioBucket: row.audio_bucket == null ? null : String(row.audio_bucket),
+    audioObjectKey: row.audio_object_key == null ? null : String(row.audio_object_key),
+    audioMimeType: row.audio_mime_type == null ? null : String(row.audio_mime_type),
+    audioUploadStatus: String(row.audio_upload_status || "not_requested"),
+    uploadStatus: String(row.upload_status || "pending"),
+    processingStatus: String(row.processing_status || "created"),
+    errorMessage: row.error_message == null ? null : String(row.error_message),
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at)
+  };
 }

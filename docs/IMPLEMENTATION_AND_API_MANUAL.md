@@ -453,15 +453,17 @@ legacy/node-mvp
    - 待补齐：稳定保存课堂类型和复盘目标字段，需要数据库 migration 确认。
 
 3. 视频上传链路
-   - `POST /api/lessons/:lessonId/videos/upload-url` 生成 R2 预签名上传地址。
-   - 前端拖入或选择视频后真实上传到 R2。
-   - 显示真实上传进度。
-   - `POST /api/videos/:videoId/complete-upload` 确认对象存在并创建 workflow。
+   - 已完成：`POST /api/lessons/:lessonId/videos/upload-url` 生成 R2 预签名上传地址。
+   - 已完成：前端拖入或选择视频后真实上传到 R2。
+   - 已完成：显示真实上传进度。
+   - 已完成：`POST /api/lessons/videos/:videoId/complete-upload` 确认对象存在并更新视频状态。
+   - 待补齐：确认上传完成后创建或唤起 workflow。
 
 4. 独立音频通道
-   - 前端尽量并行生成 ASR 音频。
-   - `POST /api/videos/:videoId/audio-upload-url` 生成音频上传地址。
-   - `POST /api/videos/:videoId/complete-audio-upload` 确认音频对象。
+   - 已完成：前端使用浏览器音频解码能力生成 WAV 音频。
+   - 已完成：视频上传与音频生成/上传并行执行。
+   - 已完成：`POST /api/lessons/videos/:videoId/audio-upload-url` 生成音频上传地址。
+   - 已完成：`POST /api/lessons/videos/:videoId/complete-audio-upload` 确认音频对象。
    - Worker 在有音频时优先使用音频，无音频时回退 FFmpeg 抽取。
 
 5. Workflow 状态
