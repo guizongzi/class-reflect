@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { config, assertRuntimeConfig } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { assertObjectExists, createReadUrl, createUploadUrl, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
-import { enqueueVideoProcessing } from "./processor.js";
+import { buildLessonSections, enqueueVideoProcessing } from "./processor.js";
 import { assertLessonOwner, getTeacherId } from "./auth.js";
 import { transcribeAudio } from "./asr.js";
 
@@ -248,6 +248,117 @@ app.patch("/api/sections/:sectionId", async (req, res, next) => {
   }
 });
 
+app.patch("/api/transcript-segments/:segmentId", async (req, res, next) => {
+  try {
+    const {
+      original_text,
+      translated_text,
+      speaker_label,
+      start_ms,
+      end_ms
+    } = req.body || {};
+    const teacherId = await getTeacherId(req);
+    const current = await query(`
+      select s.*
+      from transcript_segments s
+      join lessons l on l.id = s.lesson_id
+      where s.id = $1 and l.teacher_id = $2
+    `, [req.params.segmentId, teacherId]);
+    const segment = current.rows[0];
+    if (!segment) return res.status(404).json({ error: "transcript segment not found" });
+
+    const nextStartMs = start_ms === undefined ? segment.start_ms : Number(start_ms);
+    const nextEndMs = end_ms === undefined ? segment.end_ms : Number(end_ms);
+    if (!Number.isFinite(nextStartMs) || !Number.isFinite(nextEndMs) || nextStartMs < 0 || nextEndMs <= nextStartMs) {
+      return res.status(400).json({ error: "时间轴范围无效" });
+    }
+
+    const result = await query(`
+      update transcript_segments
+      set original_text = coalesce($2, original_text),
+          translated_text = coalesce($3, translated_text),
+          speaker_label = coalesce($4, speaker_label),
+          start_ms = $5,
+          end_ms = $6,
+          source = 'human_reviewed',
+          reviewed_at = now(),
+          reviewer_id = $7,
+          updated_at = now()
+      where id = $1
+      returning *
+    `, [
+      req.params.segmentId,
+      original_text === undefined ? null : String(original_text),
+      translated_text === undefined ? null : String(translated_text),
+      speaker_label === undefined ? null : String(speaker_label),
+      nextStartMs,
+      nextEndMs,
+      teacherId
+    ]);
+    res.json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/lessons/:lessonId/rebuild-sections", async (req, res, next) => {
+  try {
+    const lesson = (await query("select * from lessons where id = $1", [req.params.lessonId])).rows[0];
+    if (!lesson) return res.status(404).json({ error: "lesson not found" });
+    const teacherId = await getTeacherId(req);
+    assertLessonOwner(lesson, teacherId);
+
+    const video = (await query("select * from lesson_videos where lesson_id = $1 order by created_at desc limit 1", [lesson.id])).rows[0];
+    if (!video) return res.status(404).json({ error: "video not found" });
+
+    const transcriptRows = (await query(`
+      select *
+      from transcript_segments
+      where lesson_id = $1 and video_id = $2
+      order by start_ms
+    `, [lesson.id, video.id])).rows;
+    if (!transcriptRows.length) return res.status(400).json({ error: "还没有可重建的逐字稿" });
+
+    const sections = buildLessonSections(transcriptRows.map((segment) => ({
+      startMs: segment.start_ms,
+      endMs: segment.end_ms,
+      speakerLabel: segment.speaker_label,
+      originalText: segment.original_text,
+      translatedText: segment.translated_text,
+      confidence: segment.confidence
+    })));
+
+    const saved = await withTransaction(async (client) => {
+      await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [lesson.id, video.id]);
+      const rows = [];
+      for (const section of sections) {
+        const inserted = await client.query(`
+          insert into lesson_sections
+            (lesson_id, video_id, start_ms, end_ms, title, summary_text, confidence_label, tags)
+          values ($1, $2, $3, $4, $5, $6, $7, $8)
+          returning *
+        `, [
+          lesson.id,
+          video.id,
+          section.startMs,
+          section.endMs,
+          section.title,
+          section.summaryText,
+          section.confidenceLabel,
+          JSON.stringify(section.tags)
+        ]);
+        rows.push(inserted.rows[0]);
+      }
+      await client.query("update lessons set updated_at = now() where id = $1", [lesson.id]);
+      return rows;
+    });
+
+    res.json({ sections: saved });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.patch("/api/evidence-cards/:cardId/review", async (req, res, next) => {
   try {
     const { review_status, edited_conclusion, teacher_note } = req.body || {};
@@ -278,7 +389,13 @@ app.post("/api/lessons/:lessonId/reports", async (req, res, next) => {
     if (!lesson) return res.status(404).json({ error: "lesson not found" });
     const teacherId = await getTeacherId(req);
     assertLessonOwner(lesson, teacherId);
-    const markdown = buildMarkdownReport(cards);
+    const sections = (await query(`
+      select *
+      from lesson_sections
+      where lesson_id = $1
+      order by start_ms
+    `, [req.params.lessonId])).rows;
+    const markdown = cards.length ? buildMarkdownReport(cards) : buildTranscriptReport({ lesson, sections });
     const result = await query(`
       insert into reports (lesson_id, markdown_content, generated_from)
       values ($1, $2, $3)
@@ -327,6 +444,14 @@ function buildMarkdownReport(cards) {
     return `${index + 1}. ${conclusion}\n   - 时间点：${msToClock(card.start_ms)}-${msToClock(card.end_ms)}\n   - 原文依据：${card.quote_text}\n   - 建议：${card.suggestion || "建议结合课堂目标进一步复核。"}`;
   });
   return `# 课堂复盘报告\n\n## 主要发现\n\n${rows.join("\n\n") || "暂无已确认发现。"}\n\n## 边界说明\n\n本报告只基于语音转文字和时间戳，不包含视频 OCR 或画面判断。`;
+}
+
+function buildTranscriptReport({ lesson, sections }) {
+  const rows = sections.map((section, index) => {
+    const text = section.edited_summary_text || section.summary_text || "";
+    return `## ${index + 1}. ${section.title || "课堂片段"} ${msToClock(section.start_ms)}-${msToClock(section.end_ms)}\n\n${text}`;
+  });
+  return `# 课堂记录报告\n\n课程：${lesson.course_title || ""}\n课题：${lesson.lesson_title || ""}\n年级/学科：${[lesson.grade, lesson.subject].filter(Boolean).join(" / ")}\n\n## 说明\n\n本报告为基础版课堂记录导出，只包含视频上传、语音转文字、时间轴分段和教师校订内容。尚未生成 AI 教学分析结论。\n\n${rows.join("\n\n") || "暂无课堂记录。"}\n\n## 产品边界\n\n本报告只基于语音转文字和时间戳，不包含视频 OCR、画面定位或学生表情/行为判断。`;
 }
 
 function msToClock(ms) {
