@@ -2,6 +2,10 @@
 
 第一版聚焦一条真实可跑通的基础链路：对话发起复盘任务、上传课堂视频、持久保存到对象存储、基于语音转文字生成带时间轴的课堂记录、教师校订文本、导出基础课堂记录报告。
 
+## 开发基准
+
+后续任何功能扩展都以 [docs/ARCHITECTURE_BASELINE.md](docs/ARCHITECTURE_BASELINE.md) 为标杆。新增代码必须先判断属于前端、API、Agent Orchestrator、Worker、Pipeline、Integration、Domain、Database 或 Infrastructure 哪一层；不要为了临时跑通把业务判断、AI 调用、云服务 SDK、数据库写入和页面状态混在同一个文件里。
+
 ## 已完成范围
 
 - 真实问题与用户场景说明。

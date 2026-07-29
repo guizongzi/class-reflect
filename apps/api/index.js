@@ -2,12 +2,12 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config, assertRuntimeConfig } from "./config.js";
-import { query, withTransaction } from "./db.js";
-import { assertObjectExists, audioObjectKey, createReadUrl, createUploadUrl, deleteObjects, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
+import { query, withTransaction } from "./src/integrations/supabase/postgres.js";
+import { assertObjectExists, audioObjectKey, createReadUrl, createUploadUrl, deleteObjects, reportObjectKey, uploadText, videoObjectKey } from "./src/infrastructure/storage/object-storage.js";
 import { buildLessonSections, LESSON_ANALYSIS_STEPS } from "./processor.js";
 import { assertLessonOwner, getTeacherId } from "./auth.js";
-import { transcribeAudio } from "./asr.js";
-import { generateEvidenceCards, translateTranscriptSegments } from "./llm.js";
+import { transcribeAudio } from "./src/integrations/asr/asr-provider.js";
+import { generateEvidenceCards, translateTranscriptSegments } from "./src/integrations/llm/llm-provider.js";
 
 assertRuntimeConfig();
 

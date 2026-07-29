@@ -2,6 +2,8 @@
 
 第一版只实现基础链路，但目录按可扩展产品组织。代码不能因为 MVP 小就临时堆在一起；未来新增用户系统、队列、AI Agent、报告模板、第三方平台接入时，都应该进入对应层。
 
+本项目的长期架构标杆是 [ARCHITECTURE_BASELINE.md](ARCHITECTURE_BASELINE.md)。当现有实现和标杆冲突时，除 Supabase、Cloudflare R2、Google Cloud Run、阿里云 ASR/LLM 等当前已定平台外，默认以标杆为准，并通过小步重构让 M1 逐步靠近标杆；不再新增临时逻辑文件。
+
 ## 目录
 
 ```text
@@ -37,12 +39,46 @@ tests/                 后续自动化测试
 | --- | --- | --- |
 | `app` | HTTP 路由、请求校验、响应格式、鉴权中间件 | 业务规则、云厂商 SDK 细节 |
 | `domain` | 课堂、视频、转写段、证据卡片、报告的核心规则 | 数据库 SQL、fetch、S3 SDK |
-| `application` | 一个用户动作对应的用例，例如“创建上传任务”“保存校订文本” | 具体 HTTP 细节、云厂商 SDK |
+| `application` | Agent Orchestrator、用户动作对应的用例，例如“创建上传任务”“保存校订文本” | 具体 HTTP 细节、云厂商 SDK |
 | `pipelines` | 多步骤长任务编排，例如视频处理、AI 分析、报告导出 | 单个底层工具实现 |
 | `infrastructure` | PostgreSQL、R2、FFmpeg、队列、日志、缓存 | 产品判断、AI 提示词策略 |
 | `integrations` | 阿里云 ASR、LLM、Supabase Auth、Cloudflare R2 API 适配 | 跨步骤业务流程 |
 | `workers` | 后台任务入口、队列消费者、Cloud Run Jobs | 页面交互逻辑 |
 | `shared` | 错误类型、时间格式、配置工具、通用校验 | 具体业务流程 |
+
+## Agent Orchestrator 职责
+
+AI Agent 项目不能让 Worker 或某个工具文件承担“产品大脑”。从 M1 起，职责按下面边界固定：
+
+```text
+Agent Orchestrator
+  决定当前任务该做什么、进入哪个阶段、调用哪个 Agent、失败后重试还是等待教师
+
+Worker
+  只负责后台循环、认领任务、执行任务、记录日志、控制并发和退出方式
+
+Processor / Pipeline
+  只负责一条具体处理链，例如课堂视频转写分段、可选翻译、证据分析、报告生成
+
+Integration / Infrastructure
+  只负责连接外部系统或本地基础设施，例如阿里云 ASR、LLM、R2、Supabase、FFmpeg
+```
+
+当前代码中的落点：
+
+| 职责 | 当前文件 |
+| --- | --- |
+| Agent Orchestrator | `apps/api/src/application/agent-orchestrator.js` |
+| Worker 入口 | `apps/worker/index.js` |
+| 视频转写 pipeline 过渡执行器 | `apps/api/processor.js` |
+| 课堂分段规则 | `apps/api/src/pipelines/lesson-sectioning.js` |
+| FFmpeg 音频抽取 | `apps/api/src/infrastructure/media/audio-extractor.js` |
+| R2 对象存储适配 | `apps/api/src/infrastructure/storage/object-storage.js` |
+| 阿里云 ASR 适配 | `apps/api/src/integrations/asr/asr-provider.js` |
+| LLM 适配 | `apps/api/src/integrations/llm/llm-provider.js` |
+| Supabase/PostgreSQL 适配 | `apps/api/src/integrations/supabase/postgres.js` |
+
+后续新增 AI 功能时，先在 Orchestrator 决定“是否需要这个 Agent”，再让 Worker 执行对应 pipeline。不要在前端、路由或 Worker 里临时写判断逻辑。
 
 ## AI 时代的文件分类
 

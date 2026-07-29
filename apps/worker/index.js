@@ -1,6 +1,6 @@
 import { assertRuntimeConfig } from "../api/config.js";
-import { claimNextWorkflowRun, processWorkflowRun } from "../api/processor.js";
-import { closeDb } from "../api/db.js";
+import { claimNextWorkflowRun, executeWorkflowRun } from "../api/src/application/agent-orchestrator.js";
+import { closeDb } from "../api/src/integrations/supabase/postgres.js";
 
 assertRuntimeConfig();
 
@@ -23,7 +23,7 @@ try {
     }
 
     console.log(`processing workflow run ${run.id}`);
-    await processWorkflowRun(run.id);
+    await executeWorkflowRun(run.id, { workflow: run });
     console.log(`completed workflow run ${run.id}`);
   } while (!once);
 } finally {
