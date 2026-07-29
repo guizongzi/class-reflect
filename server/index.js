@@ -28,7 +28,10 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     service: "class-reflect",
-    asr_provider: config.asrProvider
+    asr_provider: config.asrProvider,
+    asr_model: config.aliyun.asrModel,
+    asr_base_url: config.aliyun.asrBaseUrl,
+    asr_key_hint: maskSecret(config.aliyun.dashscopeApiKey)
   });
 });
 
@@ -305,4 +308,10 @@ function msToClock(ms) {
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function maskSecret(value) {
+  if (!value) return "";
+  if (value.length <= 10) return `${value.slice(0, 2)}***${value.slice(-2)}`;
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
