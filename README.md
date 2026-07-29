@@ -22,7 +22,7 @@
 
 ## 模拟与真实后端
 
-前端仍保留 localStorage 演示数据，方便没有后端环境时预览界面。接入后端后，视频会先直传 Cloudflare R2，Supabase PostgreSQL 只保存文件归属、对象地址、处理状态、逐字稿、课堂分段和校订结果，后端再从 R2 读取视频完成音频抽取和语音识别。
+前端仍保留 localStorage 演示数据，方便没有后端环境时预览界面。接入后端后，视频会先直传 Cloudflare R2，Supabase PostgreSQL 只保存文件归属、对象地址、workflow 状态、逐字稿、课堂分段和校订结果。API 只负责创建上传凭证、确认上传和创建 workflow；音频抽取、ASR 和写库由独立 worker / Cloud Run Job 消费队列完成。
 
 ## 平台分工
 
@@ -83,7 +83,7 @@ LLM_MODEL=qwen-plus
 FRONTEND_ORIGIN=https://你的前端域名
 ```
 
-真实 ASR 流程：后端抽取 wav 音频后上传到 R2，生成临时读取 URL，提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。课堂记录中的每一行都会保留 `开始时间-结束时间`，长停顿会显示停顿提示。
+真实 ASR 流程：API 确认视频已进入 R2 后创建 `workflow_runs` 和 `workflow_step_runs`；worker 认领 queued workflow，从 R2 读取视频，抽取 wav 音频后上传回 R2，生成临时读取 URL，提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。课堂记录中的每一行都会保留 `开始时间-结束时间`，长停顿会显示停顿提示。
 
 4. 安装依赖并初始化数据库：
 
@@ -91,6 +91,18 @@ FRONTEND_ORIGIN=https://你的前端域名
 npm install
 npm run db:init
 npm start
+```
+
+另开一个终端运行 worker，消费已入队的课堂分析 workflow：
+
+```bash
+npm run worker
+```
+
+只想处理一条队列任务时：
+
+```bash
+npm run worker:once
 ```
 
 前端默认请求同源 `/api`。如果前端部署在 GitHub Pages、后端部署在其他域名，可在浏览器控制台设置：
@@ -103,7 +115,7 @@ localStorage.setItem("classReflectApiBase", "https://你的后端域名")
 
 ## Google Cloud 上线步骤
 
-第一版建议先把 API 和前端一起部署到 Cloud Run。视频处理暂时在 API 服务内异步执行，Cloud Run 需要配置较长 timeout；后续再拆成 Cloud Run Jobs。
+第一版把 API/前端部署为 Cloud Run Service，把视频处理部署为 Cloud Run Job。API 只处理短请求和状态查询；视频下载、FFmpeg、ASR 和写库由 worker job 执行，避免上传请求或网页会话被长任务拖住。
 
 1. 在 Google Cloud 创建项目，并启用：
 
@@ -179,19 +191,19 @@ gcloud artifacts repositories create class-reflect \
 }
 ```
 
-4. 用 Cloud Build 构建和部署：
+4. 用 Cloud Build 构建和部署 API Service 与 Worker Job：
 
 ```bash
 gcloud builds submit --config infra/google-cloud/cloudbuild.yaml
 ```
 
-5. 部署后确认 Cloud Run 的 Variables & Secrets 中已绑定：
+5. 部署后确认 Cloud Run Service 和 Cloud Run Job 的 Variables & Secrets 中都已绑定：
 
 ```text
 APP_CONFIG_ENV=APP_CONFIG_ENV:latest
 ```
 
-6. 打开健康检查：
+6. 打开 API 健康检查：
 
 ```text
 https://你的-cloud-run-url/api/health
@@ -199,13 +211,23 @@ https://你的-cloud-run-url/api/health
 
 返回 `ok: true` 后，再初始化数据库并测试上传链路。
 
+7. 上传视频后，执行 worker job 消费队列：
+
+```bash
+gcloud run jobs execute class-reflect-worker \
+  --region asia-southeast1 \
+  --wait
+```
+
+执行后页面会通过 `/api/lessons/{lessonId}/status` 看到 workflow 步骤变化。后续可接 Cloud Scheduler、Cloud Tasks 或 Pub/Sub 自动触发 worker；M1 先把 API 与音频抽取/ASR 的运行单元解耦。
+
 如果数据库之前已经初始化过，也需要重新运行一次：
 
 ```bash
 npm run db:init
 ```
 
-这会补齐 `transcript_segments` 的人工校订字段，不会清空已有数据。
+这会补齐 `transcript_segments` 的人工校订字段，以及 `workflow_runs` / `workflow_step_runs` 流程表，不会清空已有数据。
 
 可选：如果需要让 Cloud Run 直接检测阿里云 ASR，可以在 `APP_CONFIG_ENV` 里临时加入 `DEBUG_TOKEN`，重新部署后调用：
 
