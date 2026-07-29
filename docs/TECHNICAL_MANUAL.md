@@ -1,385 +1,384 @@
 # 课堂复盘与教学分析系统技术手册
 
-本文是当前项目的主技术手册。它以最新版产品约束为准，并吸收仓库中已经跑通的实现：React + TypeScript + Vite 前端、Node/Express 过渡 API、Supabase PostgreSQL、Cloudflare R2、Google Cloud Run、阿里云 ASR/LLM，以及正在预留的 Python FastAPI 长期后端骨架。
+> 文档状态：当前 M1 技术手册。本文以最新版 `ARCHITECTURE_BASELINE.md` 的前后端与分层架构为准，并结合当前仓库已经切换后的正式骨架编写。Baseline 负责长期目录和架构边界；本文负责 M1 当前要实现什么、各层怎么协作、上线和验收按什么检查。
 
-M1 的目标不是一次性做完整商业平台，而是跑通一条真实、可追溯、可扩展的核心链路：
+## 1. 当前技术栈
 
-```text
-真实课堂视频
-→ 对象存储
-→ 音频抽取或独立音频通道
-→ 带时间点 ASR
-→ 大段课堂记录
-→ 教师校订
-→ 按需翻译
-→ 候选证据
-→ 教师复核
-→ 只使用确认内容生成报告
-```
-
-## 1. M1 产品定位
-
-M1 是面向中国课堂的、基于视频语音证据的教学复盘 Agent。
-
-它不自动给教师打分，也不判断教师“好不好”，而是帮助使用者快速回答：
-
-- 哪些阶段讲得明显较快；
-- 哪些片段连续讲授时间较长；
-- 教师提出问题后是否真正留给学生思考；
-- 问题是自问自答、齐答还是个体回答；
-- 学生回答后，教师进行了怎样的反馈；
-- 哪些表达包含笼统理解检查、填充词或模糊指代；
-- 课堂在讲授、互动、练习、反馈和总结之间如何分配；
-- 每一个分析结论对应哪段视频和哪句原文；
-- 哪些内容经教师确认后可以写入报告。
-
-M1 的产品形态是：
+M1 正式骨架采用：
 
 ```text
-可追溯课堂记录
-+
-课堂行为指标
-+
-AI 候选诊断
-+
-教师人工复核
-+
-确认后报告
+pnpm Workspace + Turborepo
+Next.js + React + TypeScript 前端
+NestJS + TypeScript 主业务 API
+独立 TypeScript Worker
+共享 packages 分层
+M2/M3 可选 Python AI Runtime
 ```
 
-## 2. 当前版本边界
+旧的 Node/Express + Vite 速成验证版已经归档到 `legacy/node-mvp`，只作为迁移 R2、Supabase、阿里云 ASR、Cloud Run 已跑通逻辑的参考，不再作为正式入口扩张。
 
-当前版本采用单工作空间设计：
+## 2. M1 产品边界
 
-- 第一版只分析一节课或多节独立课堂记录；
-- 没有正式登录系统；
-- 不区分不同用户、教师、学校或组织；
-- 不做多租户、权限、订阅和配额；
-- 不做视频 OCR，不基于画面判断学生注意力；
-- 翻译由教师点击触发，不默认翻译整节课；
-- 教师审核证据是正式的 Human-in-the-Loop 节点；
-- M1 建立基础 Guardrail、Observability 和 Evaluation，不急着上完整 RAG、长期 Memory 和复杂 Agent 框架。
+M1 只聚焦一条真实课堂视频复盘链路：
 
-历史实现中仍保留 `teacher_id = demo-teacher`，这是为了兼容现有 API 和删除逻辑，不代表 M1 已经有多用户隔离。文档和后续开发中应把它视为单工作空间占位字段。
+```text
+教师上传课堂视频
+→ 选择课堂类型
+→ API 创建课堂和处理任务
+→ 视频持久保存到 Cloudflare R2
+→ 音频通道并行生成或 Worker 回退抽取
+→ 阿里云 ASR 生成带时间点逐字稿
+→ 合并为 3-5 分钟大段课堂记录
+→ 教师直接编辑大段文本
+→ 按需点击翻译
+→ AI 生成候选证据
+→ 教师接受、修改或驳回
+→ 报告只使用已确认内容
+```
 
-无登录不等于没有数据安全。M1 仍必须做到：
+M1 不做：
 
-- 视频保存在私有 Cloudflare R2；
-- 访问视频使用短期签名 URL；
-- API Key 只保存在后端或 Google Secret Manager；
-- 不把原始视频放进数据库；
-- 不生成永久公开视频链接；
+- 正式登录、多用户、多租户、组织权限和计费；
+- 课件上传与课件分析；
+- 视频 OCR、画面框选、学生注意力识别和情绪识别；
+- 教师自动评分、教师排名、学校管理后台；
+- 完整 RAG、知识图谱、长期教师画像；
+- 实时直播分析。
+
+无登录不等于无安全边界。M1 仍必须保证：
+
+- 原始视频放在私有 R2；
+- 播放或下载使用短期签名 URL；
+- API Key 只放后端或 Google Secret Manager；
+- 数据库存对象地址和状态，不存视频二进制；
 - 删除课堂时同步删除或标记删除对象文件；
-- 页面明确提示当前版本是单工作空间，不支持多人数据隔离。
+- 页面提示当前是单工作空间，不支持多人数据隔离。
 
-如果公开部署到互联网，建议至少加一个简单访问口令或平台层访问限制。这不是完整用户系统，只是避免任何人都能打开课堂视频。
+## 3. 仓库结构
 
-## 3. 技术选型
+当前正式目录遵循 baseline：
 
-| 层 | 当前状态 | 长期方向 |
+```text
+apps/
+  web/          Next.js 产品前端
+  api/          NestJS 主业务 API
+  worker/       TypeScript 后台任务
+  ai-runtime/   M2/M3 可选 Python AI 服务
+
+packages/
+  shared-types/     跨端基础类型
+  api-contracts/    API 请求与响应 Schema
+  database/         数据库 Schema、迁移、Repository 基础
+  domain/           核心领域对象与业务规则
+  prompts/          Agent Prompt 与版本
+  agents/           Agent 逻辑
+  metrics/          确定性课堂指标
+  guardrails/       AI 输出与教学边界校验
+  providers/        ASR、LLM、翻译、存储适配器
+  observability/    日志、Tracing、成本记录
+  config/           共享配置校验
+  ui/               共享 UI 组件
+  eslint-config/    统一代码规范
+
+infra/
+  docker/
+  google-cloud/
+
+legacy/
+  node-mvp/         旧速成版，仅作迁移参考
+```
+
+新增代码必须先判断属于哪一层。不能再把临时判断散落在页面、路由或 Worker 中。
+
+## 4. 分层职责
+
+| 层 | 当前职责 |
+| --- | --- |
+| `apps/web` | 上传、课堂库、视频工作台、进度展示、逐字稿编辑、证据复核、报告预览 |
+| `apps/api` | 课堂、上传凭证、状态查询、校订、翻译、复核、报告入口 |
+| `apps/worker` | 后台执行、重试、超时、日志、并发、长任务认领 |
+| `packages/domain` | 课堂、逐字稿、证据、报告、工作流的纯业务规则 |
+| `packages/database` | Supabase/PostgreSQL schema、migration、repository |
+| `packages/providers` | R2、阿里云 ASR、LLM、翻译等第三方适配 |
+| `packages/agents` | 语义分析、证据生成、报告整理等 Agent 实现 |
+| `packages/metrics` | 语速、等待时间、连续讲授等确定性指标 |
+| `packages/guardrails` | 证据来源、越界判断、报告准入校验 |
+| `packages/api-contracts` | 前端、API、测试共用的 Zod 契约 |
+| `packages/config` | `APP_CONFIG_ENV` 和环境变量解析 |
+| `packages/observability` | 日志、耗时、模型调用、错误记录 |
+
+依赖方向必须单向：
+
+```text
+web → api-contracts / shared-types / ui
+api → domain / api-contracts / database / providers / observability
+worker → domain / database / agents / metrics / guardrails / providers / observability
+agents → domain / prompts / providers / guardrails
+database → shared-types
+```
+
+禁止：
+
+```text
+apps/web → database
+apps/web → providers
+packages/domain → NestJS
+packages/domain → 数据库 ORM
+packages/metrics → LLM Provider
+packages/agents → 前端组件
+```
+
+## 5. 课堂类型
+
+视频上传后必须选择课堂类型，保存为稳定枚举：
+
+| 数据值 | 页面名称 | M1 分析重点 |
 | --- | --- | --- |
-| 前端 | React + TypeScript + Vite 已作为目标骨架 | 保持 |
-| API | Node/Express 已跑通真实链路 | 逐步迁移到 Python FastAPI |
-| Worker | Node worker 已跑通队列认领、R2、FFmpeg、ASR、写库 | 逐步迁移到 Python Worker |
-| 数据库 | Supabase PostgreSQL | 保持 |
-| 对象存储 | Cloudflare R2 | 保持 |
-| 部署 | Google Cloud Run / Cloud Run Jobs / Cloud Build | 保持 |
-| ASR | 阿里云 `qwen3-asr-flash-filetrans` | 保持 Provider 接口，允许替换 |
-| LLM/翻译 | 阿里云兼容 OpenAI 接口 | 保持 Provider 接口，允许替换 |
+| `offline_classroom_recording` | 线下课堂录像 | 语速、连续讲授、提问、等待、学生回答、齐答、反馈 |
+| `live_online_class` | 直播网课 | 语速、连麦问答、技术停顿、可听见的互动 |
+| `recorded_online_class` | 录播网课 | 结构、语速、表达清晰度、信息密度、示例和总结 |
+
+约束：
+
+- 录播网课不分析学生参与和等待学生回答；
+- 直播网课没有聊天记录时，不能把未回应判断为学生反应慢；
+- 线下课堂只基于可听见语音分析，不做画面注意力判断。
+
+## 6. 视频与音频通道
+
+视频必须持久保存，但视频保存和音频转写应解耦并尽量并行。
+
+```text
+通道 A：浏览器直传原始视频到 R2
+  用于长期归档、播放、后续复核
+
+通道 B：浏览器生成 ASR 音频并上传到 R2
+  用于更快进入 ASR
+
+回退通道：Worker 从 R2 读取视频，用 FFmpeg 抽取音频
+  用于浏览器无法生成音频或上传失败
+```
 
 原则：
 
+- 视频对象和音频对象分开记录；
+- API 不接收大文件中转；
+- R2 是对象存储事实来源；
+- 数据库保存对象 key、bucket、mime、size、状态、错误原因；
+- Worker 后续处理从 R2 读取，不依赖教师电脑、浏览器缓存或 Cloud Run 本地目录。
+
+## 7. 工作流
+
+M1 使用可恢复 workflow，而不是页面里的临时流程判断。
+
+核心状态：
+
 ```text
-确定性计算 → 规则或代码
-单步骤能力 → Tool
-语义判断 → Agent
-价值判断 → Human-in-the-Loop
-流程控制 → Workflow
-长期保存 → 数据库
+created
+queued
+running
+waiting_for_human
+completed
+failed
+cancelled
 ```
 
-## 4. 总体架构
+建议步骤：
 
 ```text
-Frontend
-  课堂库 / 上传 / 视频 / 大段课堂记录 / 对话助手 / 证据 / 报告
-    │ HTTP
-Backend API
-  课堂、视频、上传凭证、状态查询、校订、翻译、报告接口
-    │
-Workflow Orchestrator
-  状态机、阶段切换、任务决策、Agent 选择、暂停等待教师
-    │
+create_lesson
+upload_video
+upload_audio
+probe_media
+submit_asr
+poll_asr
+persist_transcript
+normalize_transcript
+build_sections
+calculate_metrics
+detect_events
+generate_evidence
+validate_evidence
+wait_human_review
+generate_report
+export_report
+```
+
+每个步骤必须记录：
+
+- `workflow_run_id`
+- step name
+- status
+- progress
+- started_at / finished_at
+- error_code / error_message
+- retry_count
+- input object references
+- output object references
+
+失败后前端要显示失败步骤和原因，并允许从失败步骤或上一个稳定步骤重试。
+
+## 8. Agent、Worker、Pipeline 分工
+
+三者不能混在一个文件里。
+
+```text
+Agent Orchestrator
+  负责任务决策、阶段切换、Agent 选择、追问教师、暂停等待人工复核
+
 Worker
-  后台认领任务、重试、超时、日志、并发控制
-    │
+  负责后台执行、认领任务、重试、超时、日志、并发
+
 Processor / Pipeline
-  视频转写、分段、翻译、证据生成、报告生成
-    │
-Integration / Infrastructure
-  R2、Supabase/PostgreSQL、FFmpeg、阿里云 ASR、LLM
+  负责某一条具体处理链，如抽音频、提交 ASR、整理逐字稿、生成证据
+
+Integration / Provider
+  负责连接阿里云 ASR、LLM、R2、Supabase
 ```
 
-当前代码落点：
+Orchestrator 不做：
 
-| 职责 | 当前文件 |
-| --- | --- |
-| 前端主界面 | `apps/web/src/main.tsx` |
-| 前端 API Client | `apps/web/src/api/client.ts` |
-| 前端课堂模型 | `apps/web/src/features/lesson-review/model.ts` |
-| 当前 API 入口 | `apps/api/index.js` |
-| 当前 Worker 入口 | `apps/worker/index.js` |
-| 过渡视频处理器 | `apps/api/processor.js` |
-| Agent Orchestrator 骨架 | `apps/api/src/application/agent-orchestrator.js` |
-| 课堂分段规则 | `apps/api/src/pipelines/lesson-sectioning.js` |
-| R2 适配 | `apps/api/src/infrastructure/storage/object-storage.js` |
-| 阿里云 ASR 适配 | `apps/api/src/integrations/asr/asr-provider.js` |
-| LLM/翻译适配 | `apps/api/src/integrations/llm/llm-provider.js` |
-| PostgreSQL 适配 | `apps/api/src/integrations/supabase/postgres.js` |
-| Python FastAPI 骨架 | `apps/api_python/` |
+- 不直接调用 FFmpeg；
+- 不直接拼 SQL；
+- 不上传对象存储；
+- 不绕过 Guardrail；
+- 不自动把未审核证据写入报告。
 
-## 5. 课堂模式
+Worker 不做：
 
-M1 固定三种课堂模式。前端在“拖入或选择课堂视频”后要求教师选择，后端保存到 `lessons.lesson_format`。
+- 不决定教学判断；
+- 不决定证据是否进入报告；
+- 不在一个大函数里写完整业务链路。
 
-| 数据值 | 页面名称 | 分析重点 |
-| --- | --- | --- |
-| `offline_classroom_recording` | 线下课堂录像 | 语速、连续讲授、提问链、学生音频回答、齐答、反馈、讲练结构 |
-| `live_online_class` | 直播网课 | 语速、讲授结构、连麦问答、可听见学生回答、技术停顿提示 |
-| `recorded_online_class` | 录播网课 | 语速、内容结构、表达清晰度、信息密度、示例和总结 |
+Processor 应该：
 
-录播网课不适合分析学生参与、等待学生回答、课堂反馈链。直播网课如果没有聊天记录，不能把未回应简单解释为学生反应慢。
+- 输入输出明确；
+- 幂等；
+- 可重试；
+- 可单独测试；
+- 只负责一个具体步骤。
 
-## 6. M1 Agent 与 Tool 边界
+## 9. 数据库
 
-M1 推荐采用 1 个 Agent Orchestrator、5 个逻辑 Agent，以及若干普通 Tool 和规则引擎。5 个 Agent 是逻辑角色，不是 5 个独立微服务。
+M1 数据库继续使用 Supabase PostgreSQL。
 
-| 组件 | M1 职责 | 当前状态 |
-| --- | --- | --- |
-| 课堂任务与画像 Agent | 明确复盘目标、课堂模式、可分析维度 | 预留 |
-| 逐字稿整理 Agent | 整理 ASR 分段、说话人、语言、低置信度 | 部分由分段规则承担 |
-| 课堂事件与互动 Agent | 识别提问、回答、齐答、自答、追问和反馈链 | 待实现 |
-| 教学证据 Agent | 将指标和事件转为事实、谨慎判断、建议及证据卡 | 已有接口骨架，需强化 Guardrail |
-| 报告 Agent | 只使用教师确认内容生成报告 | 基础 Markdown 报告已实现 |
-| Translation Tool | 教师点击后翻译片段 | 已实现为可选链路 |
-| Metrics Engine | 语速、停顿、连续讲授、问题等待等确定性计算 | 待从规则伪判断中拆出 |
-| Evidence Validator | 校验证据来源、时间点、事实与建议关系 | 待实现 |
-
-Orchestrator 不负责教学判断，只负责控制 AI 工作：
-
-- 根据课堂模式选择规则集；
-- 组织 Agent 调用顺序；
-- 读取 Prompt 版本；
-- 将长逐字稿切分成分析窗口；
-- 校验 Agent 输出 Schema；
-- 调用 Guardrail；
-- 失败重试；
-- 记录 Agent Run；
-- 在证据生成后暂停等待教师审核；
-- 只有审核完成后才允许生成报告。
-
-Orchestrator 不应该做：
-
-- 不直接修改教师确认内容；
-- 不直接给教师打分；
-- 不绕过 Evidence Validator；
-- 不自动发布报告；
-- 不负责 FFmpeg 或 ASR。
-
-## 7. 真实处理链路
-
-当前已跑通或已接近跑通的 M1 链路：
-
-```text
-web 选择视频
-→ web 确认课堂类型
-→ api 创建 lesson 和 lesson_video
-→ api 生成 R2 预签名上传地址
-→ web 直传视频到 R2 并显示上传进度
-→ web 尝试并行生成 ASR 用音频并上传到 R2
-→ api 确认视频对象存在并创建 workflow_run / workflow_step_runs
-→ worker 认领 queued workflow
-→ worker 优先使用已上传音频；没有音频时从 R2 读取视频并用 FFmpeg 抽取音频
-→ worker 将临时音频上传回 R2
-→ worker 调用阿里云 ASR 生成带时间点逐字稿
-→ worker 写入 transcript_segments
-→ worker 聚合 lesson_sections
-→ web 展示大段课堂记录
-→ 教师编辑并保存课堂记录
-→ 教师按需点击翻译
-→ api 生成基础课堂记录报告
-```
-
-视频保存和音频处理必须解耦：
-
-```text
-通道 A：浏览器直传原始视频到 R2，用于长期归档和播放
-通道 B：浏览器或 worker 生成 ASR 音频，独立上传或回退抽取
-```
-
-这样 ASR 不必永远等待“视频上传完成后再下载视频、再抽音频”，后续可演进为边缘媒体任务或专门 Python/FFmpeg worker。
-
-## 8. 数据库设计
-
-当前数据库以已实现表为准。
-
-### 已实现核心表
+已实现或 M1 必须保留的核心表：
 
 | 表 | 用途 |
 | --- | --- |
 | `lessons` | 课堂基本信息、课堂类型、状态 |
-| `lesson_videos` | 视频对象、音频对象、上传状态、处理状态 |
-| `analysis_tasks` | 旧任务表，兼容现有流程 |
-| `workflow_runs` | 新流程状态源 |
-| `workflow_step_runs` | 每个处理步骤的状态、进度和错误 |
+| `lesson_videos` 或后续 `lesson_assets` | 视频对象、音频对象、上传状态、处理状态 |
+| `workflow_runs` | 一次处理流程的总状态 |
+| `workflow_step_runs` | 每个步骤的状态、进度、错误 |
 | `transcript_segments` | ASR 原始小段、时间点、原文、译文、校订字段 |
-| `lesson_sections` | 3-5 分钟左右的大段课堂记录和编辑结果 |
-| `evidence_cards` | 候选证据卡、结论、建议、复核状态 |
-| `reports` | Markdown 报告和导出对象 |
+| `lesson_sections` | 3-5 分钟大段课堂记录和教师编辑结果 |
+| `evidence_cards` | 候选证据、事实、判断、建议、复核状态 |
+| `reports` | 报告 Markdown、导出对象、报告状态 |
 
-### M1 需要继续补齐的表或字段
+M1 可继续使用兼容旧链路的表，但新的 repository 应收敛到 `packages/database`，API 和 Worker 不能各自手写重复 SQL。
 
-| 目标 | 建议 |
-| --- | --- |
-| 翻译独立留痕 | 新增 `translations`，或先继续使用 `transcript_segments.translated_text` |
-| 课堂画像 | 新增 `classroom_profiles` |
-| 课堂事件 | 新增 `classroom_events` |
-| 问题链 | 新增 `question_chains` |
-| 确定性指标 | 新增 `classroom_metrics` |
-| 证据来源 | 新增 `evidence_sources`，避免只把引用塞在 `evidence_cards.quote_text` |
-| Agent 运行日志 | 新增 `agent_runs` |
-| 对话状态 | 可新增 `conversation_messages`，直接关联 `lesson_id` |
-
-### 未来演进
-
-当前 `lesson_videos` 可以在 M2/M3 演进为更通用的 `lesson_assets`，支持：
+M1 不预置：
 
 ```text
-video
-audio
-chat_log
-slide
-exported_report
-```
-
-但 M1 暂时不上传课件，不需要为了未来扩展立刻迁移表名。
-
-M1 不建议在每张表预先加入：
-
-```text
+users
+organizations
+memberships
+roles
+subscriptions
+tenant_id
 organization_id
 owner_user_id
-created_by
-tenant_id
 ```
 
-等正式登录、多用户和组织管理进入 M3 时，再做迁移。
+等 M3 做登录、多组织和商业化时，再按 baseline 增加 identity schema。
 
-## 9. 逐字稿与校订
+## 10. 逐字稿与校订
 
-ASR 不是 Agent，逐字稿整理才是 Agent。
+ASR 负责生成带时间点的小段，逐字稿整理 Agent 或规则负责合并和标记。
 
-M1 当前已实现：
+M1 必须实现：
 
-- ASR 返回带时间点小段；
-- 小段写入 `transcript_segments`；
-- 后端聚合成大段 `lesson_sections`；
-- 前端展示大段课堂记录；
-- 教师可以直接编辑大段文本，不需要逐句确认；
-- 原始 ASR 文本保留，编辑文本另存。
+- ASR 小段写入 `transcript_segments`；
+- 每段有 `start_ms`、`end_ms`、`original_text`；
+- 原始文本和教师编辑文本分开保存；
+- 大段记录写入 `lesson_sections`；
+- 教师直接编辑大段文本，不逐句确认；
+- 不需要修改的段落无需确认；
+- 证据必须能回到时间点和原文。
 
-M1 后续应补齐：
+后续增强：
 
 - 说话人角色：教师、学生、多人、未知；
 - 语言标记：中文、英文、中英混合；
 - 低置信度和待复核原因；
 - 分句合并或拆分；
-- 专业术语标记；
-- 逐字稿整理 Agent 的 schema 校验。
+- 学科术语标记。
 
-教师校订可修改：
+## 11. 翻译
 
-- 原文；
-- 说话人；
-- 分段；
-- 术语；
-- 英文译文。
+翻译默认不自动跑整节课，由教师点击触发。
 
-必须保留原始 ASR 结果，不能用教师编辑结果覆盖唯一事实来源。
+支持：
 
-## 10. 翻译设计
-
-翻译默认由教师点击触发，不自动翻译整节课。
-
-支持操作：
-
-- 翻译单句；
+- 翻译单段；
 - 翻译选中片段；
 - 重新翻译；
 - 编辑译文；
 - 可选翻译全部英文片段。
 
-当前采用 LLM Provider 实现翻译，因为课堂中可能有中英混合、学科术语、不完整口语和上下文指代。架构上必须保留 Provider 接口，后续可以替换为专业机器翻译服务。
+M1 使用 LLM Provider 做翻译，因为课堂文本可能有中英混合、学科术语、不完整口语和上下文指代。Provider 接口必须保留，后续可替换为专业机器翻译服务。
 
-## 11. Metrics Engine
+## 12. Metrics Engine
 
-所有可确定性计算的指标都不应交给 LLM 数数。
+确定性指标不要交给 LLM 数数。
 
-M1 推荐优先实现：
+M1 优先实现：
 
-- `speech-rate.metric`：有效字数 / 实际发言分钟；
-- `speaking-time.metric`：教师、学生、未知说话时长；
-- `continuous-lecture.metric`：教师连续发言时长；
-- `pause.metric`：长停顿；
-- `wait-time.metric`：教师问题结束到首个回应；
-- `question-count.metric`：问题数量；
-- `question-chain.metric`：问题、等待、回答、反馈链；
-- `feedback-count.metric`：反馈类型统计；
-- `language-pattern.metric`：填充词、笼统理解检查、指令性语言；
-- `lesson-structure.metric`：讲授、互动、练习、反馈、总结分布；
-- `information-density.metric`：语速、术语、概念切换、停顿、示例组合提示。
+- 语速：有效字数或词数 / 发言分钟；
+- 教师连续讲授时长；
+- 长停顿；
+- 教师问题数量；
+- 问题后等待时间；
+- 学生回答或齐答；
+- 教师反馈类型；
+- 课堂结构时间分布；
+- 填充词、笼统理解检查、模糊指代；
+- 信息密度提示。
 
 信息密度不输出黑箱总分，只输出可观察原因。
 
-## 12. 中国课堂重点事件
+## 13. 中国课堂重点事件
 
-课堂事件 Agent 识别的是课堂行为，不是直接评价教学质量。
+课堂事件识别的是行为，不是直接评价教学质量。
 
-通用事件：
+重点事件：
 
-- `teacher_explanation`
 - `teacher_question`
-- `student_response`
-- `teacher_feedback`
-- `teacher_follow_up`
-- `activity_instruction`
-- `student_practice`
-- `lesson_summary`
-- `classroom_management`
-- `technical_interruption`
-
-中国课堂重点事件：
-
 - `teacher_self_answer`
+- `student_response`
 - `choral_response`
 - `individual_response`
-- `named_student_response`
+- `teacher_feedback`
+- `teacher_follow_up`
 - `generic_comprehension_check`
 - `specific_comprehension_check`
 - `answer_replacement`
 - `transfer_to_another_student`
 
-重点创新：
+M1 的创新点应优先围绕中国课堂高频真实问题：
 
-- 自问自答：教师提出问题后很短时间内自己作答，不计为真实学生互动；
-- 齐答：反映课堂节奏，但不能证明所有学生理解；
-- 笼统理解检查：如“听懂了吗、明白了吗、有没有问题”；
-- 具体理解检查：如“请解释原因、请举例、请比较、请用自己的话说明”；
-- 反馈类型：结果确认、泛泛表扬、具体肯定、直接纠错、提示性纠错、解释性反馈、追问性反馈、转问其他学生、教师直接代答、无明显反馈。
+- 自问自答；
+- 齐答和个体回答区分；
+- 笼统理解检查；
+- 问题、等待、回答、反馈链；
+- 结尾加速；
+- 连续讲授过长；
+- 可追溯证据卡；
+- 教师确认后报告。
 
-## 13. 证据与 Guardrail
+## 14. 证据与 Guardrail
 
-教学证据 Agent 是 M1 的核心 Agent。每张候选证据卡必须分清：
+每张候选证据卡必须分清：
 
 ```text
 事实
@@ -409,7 +408,7 @@ M1 推荐优先实现：
 - 根据单节课进行教师排名；
 - 把相关性写成因果性。
 
-Evidence Validator 使用代码校验：
+Evidence Validator 必须检查：
 
 - `segment_id` 或 `section_id` 是否存在；
 - 时间范围是否合法；
@@ -422,31 +421,19 @@ Evidence Validator 使用代码校验：
 - 是否包含不支持的分析维度；
 - 是否出现空证据。
 
-教学边界 Guardrail 检查：
+## 15. Human-in-the-Loop
 
-- 自动评分；
-- 人格评价；
-- 无依据能力判断；
-- 学生心理推断；
-- 仅凭未开摄像头判断注意力；
-- 将在线时长等同于有效学习；
-- 将网络延迟解释为学生反应慢；
-- 将齐答解释为全班掌握；
-- 将未发言解释为未参与。
-
-## 14. Human-in-the-Loop
-
-教师证据审核不是附加功能，而是工作流正式暂停节点。
+教师证据审核是 workflow 的正式暂停节点。
 
 ```text
 AI 生成候选证据
 → 程序 Guardrail
 → 教师审核
-→ 接受 / 修改 / 驳回 / 需要更多上下文
+→ 接受 / 修改后接受 / 驳回 / 需要更多上下文
 → 报告生成
 ```
 
-审核状态：
+稳定枚举：
 
 ```text
 pending_review
@@ -456,15 +443,13 @@ rejected
 needs_more_context
 ```
 
-当前表中已有中文状态占位，例如 `待复核`。后续应逐步统一为稳定枚举值，前端再映射为中文文案。
-
 证据卡操作：
 
-- 播放对应视频时间点；
+- 查看来源时间点；
 - 查看逐字稿；
 - 查看指标；
 - 展开前后文；
-- 修改事实描述；
+- 修改事实；
 - 修改判断；
 - 修改建议；
 - 写审核备注；
@@ -472,20 +457,14 @@ needs_more_context
 - 驳回；
 - 要求重新分析。
 
-由于 M1 无用户系统，不需要 `reviewed_by`。可以固定记录 `reviewed_by_role = operator`，或暂时省略。
+报告只能使用 `accepted` 和 `edited_and_accepted`。
 
-## 15. 报告 Agent
+## 16. 报告 Agent
 
-报告 Agent 只能读取以下状态的证据：
-
-```text
-accepted
-edited_and_accepted
-```
+报告 Agent 不重新分析原始逐字稿，只整理教师确认后的证据。
 
 不允许：
 
-- 再次分析原始逐字稿；
 - 新增未审核判断；
 - 改写教师确认后的含义；
 - 删除证据时间点；
@@ -506,36 +485,43 @@ M1 报告结构：
 ## 8. 分析限制与不确定性
 ```
 
-M1 可先导出 Markdown 或 HTML，再考虑 PDF。
+M1 可先导出 Markdown 或 HTML，PDF 放到后续。
 
-## 16. 前端工作区
+## 17. 前端工作区
 
-当前前端采用浅色、双区工作台：
+前端采用浅色工作台，桌面和手机分工不同。
 
-- 左侧或主区：视频、上传、课堂分段、大段课堂记录；
-- 右侧：AI 任务助手、阶段进度、对话、处理卡片、证据卡片、报告操作。
+桌面端：
 
-电脑端应完整支持上传、预览、校订、证据核对、报告编辑。手机端重点支持查看、播放、快速标注、快速确认，不能把桌面复杂布局硬压成三栏。
+- 主区：视频上传、播放、时间段导航、大段课堂记录编辑；
+- 右侧：AI 任务助手、阶段进度、对话、处理卡片、证据卡、报告操作。
+
+手机端：
+
+- 查看课堂库；
+- 播放视频；
+- 查看处理状态；
+- 阅读逐字稿；
+- 快速接受或驳回证据。
 
 核心页面：
 
-1. 首页课堂库：查看所有课堂视频、状态、删除记录；
-2. 新建课堂：课堂标题、课堂模式、学段、学科、复盘目标、视频上传；
-3. 处理进度：上传视频、抽取音频、生成逐字稿、整理逐字稿、计算指标、识别事件、生成证据、等待审核；
-4. 逐字稿：时间轴、大段编辑、说话人、原文、按需翻译、跳转视频；
-5. 课堂概览：课堂节奏、课堂语言、互动链路；
-6. 证据审核：待审核、已接受、已修改、已驳回、需要更多上下文；
-7. 报告：预览、编辑、导出。
+1. 首页课堂库：查看已有课堂视频、状态、删除记录；
+2. 新建课堂：课堂标题、课堂类型、学段、学科、复盘目标、视频上传；
+3. 处理进度：上传、音频、ASR、分段、指标、证据、等待审核；
+4. 逐字稿：时间轴、大段编辑、原文、按需翻译、跳转视频；
+5. 证据审核：待审核、已接受、已修改、已驳回、需要更多上下文；
+6. 报告：预览、编辑、导出。
 
-## 17. Observability
+## 18. Observability
 
-M1 必须有基础观测，不需要接复杂 LLMOps 平台。
+M1 必须有基础观测，不需要先接复杂 LLMOps 平台。
 
-需要记录：
+必须记录：
 
-- 哪个 workflow 步骤失败；
+- workflow 哪一步失败；
 - 使用哪个模型；
-- 使用哪个 Prompt 版本；
+- Prompt 版本；
 - 输入和输出 Token；
 - 耗时；
 - 重试次数；
@@ -544,9 +530,9 @@ M1 必须有基础观测，不需要接复杂 LLMOps 平台。
 - 生成了多少证据；
 - Guardrail 驳回了多少证据。
 
-开发模式可增加 `/diagnostics`，展示 workflow run、agent run、当前步骤、错误信息、模型耗时和证据校验结果。普通使用者不需要看到完整 Prompt 和原始模型调用内容。
+开发环境可以增加 `/diagnostics`，展示 workflow run、agent run、当前步骤、错误信息、模型耗时和证据校验结果。普通教师不需要看到完整 Prompt 和原始模型调用内容。
 
-## 18. Evaluation
+## 19. Evaluation
 
 M1 应建立 5-10 个离线评测片段：
 
@@ -580,7 +566,7 @@ HITL 在线质量信号：
 
 这些是产品质量信号，不能简单等同为模型准确率。
 
-## 19. Memory 与 RAG
+## 20. Memory 与 RAG
 
 M1 不需要复杂 Agent Memory。
 
@@ -588,190 +574,17 @@ M1 只保存业务状态：
 
 - 当前课堂；
 - 复盘目标；
-- 课堂画像；
+- 课堂类型；
 - 已选择分析维度；
 - 教师修改的逐字稿；
 - 教师审核结果；
 - 报告版本。
 
-这些都进入数据库，不需要向量化。
+这些进入数据库，不需要向量化。
 
 M1 暂时不需要完整 RAG。当前分析对象是单节课，结构化数据库查询、关键词检索、时间窗口检索比向量检索更稳定。M2 比较两轮相似教学情境时，再加入轻量语义检索；M3 结合多门课程、课件、教学规范时，再正式引入 pgvector、Hybrid Search、Metadata Filter、Reranker 和 Citation。
 
-## 20. M1 完整工作流
-
-```text
-1. 创建课堂
-2. 选择课堂模式
-3. 输入复盘目标
-4. 上传视频
-5. 素材质量检查
-6. 显示可分析能力
-7. 并行音频通道或 FFmpeg 抽音频
-8. ASR 生成带时间戳逐字稿
-9. 逐字稿整理 Agent
-10. 教师校订逐字稿
-11. 按需点击翻译
-12. Metrics Engine 计算指标
-13. 课堂事件与互动 Agent
-14. 教学证据 Agent
-15. Evidence Validator + Guardrail
-16. 教师 HITL 审核
-17. 报告 Agent
-18. 教师编辑、预览和导出
-```
-
-## 21. M1 开发范围
-
-### P0 必须真实实现
-
-- 无登录单工作空间；
-- 创建课堂；
-- 课堂模式选择；
-- 视频上传到对象存储；
-- FFmpeg 抽音频或独立音频通道；
-- 真实 ASR；
-- 带时间戳逐字稿；
-- 逐字稿修改；
-- 点击翻译；
-- 教师语速；
-- 连续讲授；
-- 教师提问；
-- 自问自答；
-- 学生回答；
-- 等待时间；
-- 反馈类型；
-- 至少生成三类证据卡；
-- 点击证据跳转视频；
-- 接受、修改、驳回；
-- 报告只使用确认内容；
-- 基础日志、错误和重试。
-
-### P1 最值得展示的创新
-
-- 课堂节奏曲线；
-- 结尾加速提示；
-- 齐答与个体回答区分；
-- 笼统理解检查；
-- 问题、等待、回答、反馈链；
-- 信息密度提示；
-- 课堂语言模式；
-- 可分析能力矩阵；
-- 不确定性提示。
-
-### P2 有余力再做
-
-- 直播聊天记录 CSV 导入；
-- 课件页关联；
-- 模糊指代结合课件；
-- 课堂画面截图作为证据；
-- 更细的课堂结构；
-- 报告 PDF 导出。
-
-### M1 不建议做
-
-- 登录和多用户；
-- 多租户；
-- 教师排名；
-- 自动教学评分；
-- 学生注意力识别；
-- 情绪识别；
-- 长期教师画像；
-- 完整 RAG；
-- 知识图谱；
-- LangGraph；
-- 多模型自动路由；
-- 实时直播分析；
-- 学校级管理后台。
-
-## 22. M2/M3 演进
-
-M2 聚焦第二轮课堂改进：
-
-- Improvement Plan Agent；
-- Comparison Agent；
-- 教师术语表；
-- 同课程轻量 RAG；
-- Prompt 回归测试；
-- 跨课堂 Trace；
-- 结构化课堂历史。
-
-M3 聚焦多课程和商业化：
-
-- 登录；
-- 用户；
-- 组织；
-- 多租户隔离；
-- 权限；
-- 课程管理；
-- 教师长期趋势；
-- 多课程报告；
-- 正式 RAG；
-- 模型路由；
-- 成本配额；
-- 审计日志；
-- 合规和数据保留策略。
-
-无登录版升级到多用户时，再为核心表补 `organization_id`、`owner_user_id`、`created_by` 等字段。
-
-## 23. 目录规范
-
-本节只记录当前仓库目录与近期迁移方向。更完整的文件架构、模块拆分和长期分层标准，以 `ARCHITECTURE_BASELINE.md` 为准；但 baseline 不能反向扩大当前 M1 的功能范围。
-
-现有目录：
-
-```text
-apps/
-  web/                 React + TypeScript + Vite 前端
-  api/                 当前 Node/Express API 与过渡实现
-  api_python/          Python FastAPI 长期后端骨架
-  worker/              当前后台任务入口
-docs/                  产品方案、架构说明、技术手册
-infra/                 Docker、Cloud Run、Cloud Build
-temp/                  临时测试脚本，不进入正式链路
-tests/                 后续自动化测试
-```
-
-后续目标目录：
-
-```text
-apps/
-  web/
-    lesson-create/
-    processing/
-    transcript/
-    classroom-overview/
-    evidence-review/
-    report/
-  api_python/
-    app/
-    domain/
-    application/
-    pipelines/
-    infrastructure/
-    integrations/
-    workers/
-
-packages/
-  database/
-  shared-types/
-  prompts/
-  rule-sets/
-  llm-provider/
-```
-
-每个 Agent 后续应按统一结构组织：
-
-```text
-agent.py
-prompt.py
-schema.py
-validator.py
-examples.json
-agent_test.py
-```
-
-## 24. 部署与配置
+## 21. 部署与配置
 
 平台分工：
 
@@ -779,7 +592,7 @@ agent_test.py
 | --- | --- |
 | Supabase | PostgreSQL 数据库，保存课堂、视频元数据、逐字稿、证据、报告 |
 | Cloudflare R2 | 原始视频、临时音频、导出报告文件 |
-| Google Cloud | Cloud Run API、Cloud Run Job、Cloud Build、Artifact Registry、Secret Manager、Logging |
+| Google Cloud | Cloud Run API、Cloud Run Web、Cloud Run Job、Cloud Build、Artifact Registry、Secret Manager、Logging |
 | 阿里云 | ASR、LLM、按需翻译 |
 | GitHub | 代码版本管理和线上部署源 |
 
@@ -806,16 +619,23 @@ LLM_BASE_URL
 LLM_API_KEY
 LLM_MODEL
 FRONTEND_ORIGIN
+NEXT_PUBLIC_API_BASE_URL
 ```
 
 本地开发：
 
 ```bash
-npm install
-npm run db:init
-npm run web:dev
-npm start
-npm run worker
+pnpm install
+pnpm web:dev
+pnpm api:dev
+pnpm worker:dev
+```
+
+检查和构建：
+
+```bash
+pnpm check
+pnpm build
 ```
 
 线上部署：
@@ -828,12 +648,53 @@ gcloud run jobs execute class-reflect-worker --region asia-southeast1 --wait
 健康检查：
 
 ```text
-https://你的-cloud-run-url/api/health
+https://你的-api-cloud-run-url/api/health
 ```
 
-## 25. 最终原则
+## 22. M1 验收清单
 
-这套 M1 架构不是“很多 Agent 自主协作”，而是一个可控的证据生产流程：
+P0 必须真实实现：
+
+- 创建课堂；
+- 课堂类型选择；
+- 视频上传到 R2；
+- 视频对象和音频对象入库；
+- 上传进度真实显示；
+- 独立音频通道或 FFmpeg 回退抽音频；
+- 真实 ASR；
+- 带时间点逐字稿；
+- 大段课堂记录；
+- 逐字稿编辑保存；
+- 点击翻译；
+- 基础指标计算；
+- 至少三类证据卡；
+- 证据可回到时间点和原文；
+- 接受、修改后接受、驳回；
+- 报告只使用确认内容；
+- 基础日志、错误提示和重试。
+
+P1 最值得展示的创新：
+
+- 课堂节奏曲线；
+- 结尾加速提示；
+- 齐答与个体回答区分；
+- 笼统理解检查；
+- 问题、等待、回答、反馈链；
+- 信息密度提示；
+- 可分析能力矩阵；
+- 不确定性提示。
+
+P2 有余力再做：
+
+- 直播聊天记录 CSV 导入；
+- 课件页关联；
+- 课堂画面截图作为证据；
+- 更细课堂结构；
+- PDF 导出。
+
+## 23. 最终原则
+
+这套 M1 架构不是“很多 Agent 自主乱跑”，而是一个可控的证据生产流程：
 
 ```text
 课堂任务与画像 Agent
@@ -847,7 +708,7 @@ https://你的-cloud-run-url/api/health
 → 报告 Agent
 ```
 
-周边能力明确分类：
+周边能力分类：
 
 ```text
 ASR                  外部模型服务
@@ -865,4 +726,4 @@ FFmpeg               媒体工具
 跨资料语义检索         M2/M3 再使用 RAG
 ```
 
-后续任何新增功能都必须先回答：它属于前端、API、Orchestrator、Worker、Pipeline、Integration、Infrastructure、Domain、Database、Evaluation 里的哪一层。不能再把临时判断散落在页面、路由或 Worker 中。
+后续任何新增功能都必须先回答：它属于前端、API、Orchestrator、Worker、Pipeline、Provider、Infrastructure、Domain、Database、Evaluation 里的哪一层。
