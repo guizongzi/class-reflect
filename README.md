@@ -230,6 +230,7 @@ npm run db:init
 ```
 
 这会补齐 `transcript_segments` 的人工校订字段，以及 `workflow_runs` / `workflow_step_runs` 流程表，不会清空已有数据。
+本次还会补齐 `lesson_sections.review_status`、`reviewed_at`、`reviewer_id`，用于保存大段课堂记录的校订状态。
 
 可选：如果需要让 Cloud Run 直接检测阿里云 ASR，可以在 `APP_CONFIG_ENV` 里临时加入 `DEBUG_TOKEN`，重新部署后调用：
 
