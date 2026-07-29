@@ -63,11 +63,11 @@ web 选择视频
 → api 创建 lesson 和 video 记录
 → api 生成 Cloudflare R2 预签名上传地址
 → web 直传视频到 R2 并显示上传进度
+→ 可选：web 或媒体任务并行上传 ASR 用音频到 R2
 → api 确认对象存在并创建 workflow_run / workflow_step_runs
 → worker / Cloud Run Job 认领 queued workflow
-→ worker 从 R2 读取视频
-→ worker 调用 FFmpeg 抽取音频
-→ worker 将临时音频上传回 R2
+→ worker 优先使用已上传音频；没有音频时再从 R2 读取视频并调用 FFmpeg 抽取音频
+→ worker 将生成的临时音频上传回 R2
 → worker 调用 ASR 生成带时间点逐字稿
 → worker 将 transcript_segments 和 lesson_sections 写回 PostgreSQL
 → web 展示、编辑并保存课堂记录
@@ -81,7 +81,7 @@ web 选择视频
 ```text
 用户选择视频
 ├─ 通道 A：浏览器直传原始视频到 R2，保存长期归档和播放地址
-└─ 通道 B：worker 认领 workflow，生成临时音频或接收轻量媒体任务做 ASR
+└─ 通道 B：浏览器、边缘任务或媒体 worker 生成 ASR 用音频，并通过独立音频上传接口进入 R2
 
 流程控制器统一记录状态：
 queued / verify_upload / download_video / extract_audio / upload_audio / asr / build_sections / write_transcript / ready / failed
