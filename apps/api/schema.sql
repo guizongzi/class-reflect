@@ -125,11 +125,18 @@ create table if not exists lesson_sections (
   title text not null,
   summary_text text,
   edited_summary_text text,
+  review_status text not null default '待校订',
+  reviewed_at timestamptz,
+  reviewer_id text,
   confidence_label text,
   tags jsonb not null default '[]',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table lesson_sections add column if not exists review_status text not null default '待校订';
+alter table lesson_sections add column if not exists reviewed_at timestamptz;
+alter table lesson_sections add column if not exists reviewer_id text;
 
 create table if not exists evidence_cards (
   id uuid primary key default gen_random_uuid(),
