@@ -30,7 +30,7 @@
 | Supabase | PostgreSQL 数据库、教师登录、保存课堂/逐字稿/证据卡片/复核结果/报告 | `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DATABASE_URL`、`DIRECT_URL` |
 | Google Cloud | 部署前端和 API、运行后台视频处理任务、构建和保存 Docker 镜像、保存密钥、查看日志 | Cloud Run、Cloud Run Jobs、Cloud Build、Artifact Registry、Secret Manager、Logging |
 | Cloudflare | 使用 R2 存储课堂原始视频、临时音频和导出文件；提供预签名上传与播放 | `R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_BUCKET`、`R2_ENDPOINT` |
-| 阿里云 | ASR 将课堂音频转为带时间点逐字稿；LLM 将逐字稿生成课堂事件、证据卡片和报告 | ASR 的 AppKey/AccessKey；LLM 的 `BASE_URL`、`API_KEY`、`MODEL` |
+| 阿里云 | ASR 将课堂音频转为带时间点逐字稿；LLM 将逐字稿生成课堂事件、证据卡片和报告 | DashScope API Key；LLM 的 `BASE_URL`、`API_KEY`、`MODEL` |
 | GitHub | 保存代码、版本管理、让 AI Agent 修改和提交项目 | 代码仓库及访问权限 |
 
 ## 本地运行
@@ -68,8 +68,12 @@ R2_ENDPOINT=https://你的账号ID.r2.cloudflarestorage.com
 R2_BUCKET=你的 bucket
 R2_ACCESS_KEY_ID=...
 R2_SECRET_ACCESS_KEY=...
-ALIYUN_ASR_APP_KEY=...
 ALIYUN_ASR_MODEL=qwen3-asr-flash-filetrans
+ALIYUN_DASHSCOPE_API_KEY=...
+ALIYUN_ASR_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+ALIYUN_ASR_POLL_INTERVAL_MS=3000
+ALIYUN_ASR_TIMEOUT_MS=600000
+ALIYUN_ASR_FILE_URL_EXPIRES_SECONDS=3600
 ALIYUN_ACCESS_KEY_ID=...
 ALIYUN_ACCESS_KEY_SECRET=...
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -77,6 +81,8 @@ LLM_API_KEY=...
 LLM_MODEL=qwen-plus
 FRONTEND_ORIGIN=https://你的前端域名
 ```
+
+真实 ASR 流程：后端抽取 wav 音频后上传到 R2，生成临时读取 URL，提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。
 
 4. 安装依赖并初始化数据库：
 
