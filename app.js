@@ -290,6 +290,7 @@ function processCard() {
         ${processItems.map((item) => processItem(item, statusByKey.get(item.key))).join("")}
       </div>
       ${state.lessonId ? `<button class="finding-button" type="button" data-action="refreshStatus" style="margin-top: 12px;">刷新状态</button>` : ""}
+      ${state.videoId && state.processingStatus === "failed" ? `<button class="finding-button primary" type="button" data-action="retryProcessing" style="margin-top: 12px;">从失败步骤重试</button>` : ""}
     </div>
   `;
 }
@@ -355,6 +356,10 @@ function bindConversationActions() {
 function handleAction(action) {
   if (action === "refreshStatus") {
     refreshProcessingStatus();
+    return;
+  }
+  if (action === "retryProcessing") {
+    retryProcessing();
     return;
   }
   if (action === "seek") {
@@ -574,6 +579,31 @@ async function refreshProcessingStatus() {
     persist();
     renderAll();
   } catch (error) {
+    state.backendError = error.message;
+    persist();
+    renderAll();
+  }
+}
+
+async function retryProcessing() {
+  if (!state.videoId) return;
+  try {
+    state.backendError = "";
+    state.processingStatus = "queued";
+    state.taskProgress = 0;
+    state.taskStep = "queued";
+    state.processSteps = [];
+    persist();
+    renderAll();
+
+    const task = await requestJson(`/api/videos/${state.videoId}/retry-processing`, { method: "POST" });
+    state.taskId = task.task_id;
+    state.processingStatus = task.status || "queued";
+    persist();
+    renderAll();
+    startProcessingPoll();
+  } catch (error) {
+    state.processingStatus = "failed";
     state.backendError = error.message;
     persist();
     renderAll();
