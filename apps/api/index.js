@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config, assertRuntimeConfig } from "./config.js";
 import { query, withTransaction } from "./db.js";
-import { assertObjectExists, createReadUrl, createUploadUrl, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
+import { assertObjectExists, audioObjectKey, createReadUrl, createUploadUrl, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
 import { buildLessonSections, LESSON_ANALYSIS_STEPS } from "./processor.js";
 import { assertLessonOwner, getTeacherId } from "./auth.js";
 import { transcribeAudio } from "./asr.js";
@@ -153,6 +153,67 @@ app.post("/api/videos/:videoId/complete-upload", async (req, res, next) => {
     });
 
     res.status(202).json({ task_id: task.task.id, workflow_run_id: task.workflow.id, status: task.task.status });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/videos/:videoId/audio-upload-url", async (req, res, next) => {
+  try {
+    const videoResult = await query("select * from lesson_videos where id = $1", [req.params.videoId]);
+    const video = videoResult.rows[0];
+    if (!video) return res.status(404).json({ error: "video not found" });
+    const teacherId = await getTeacherId(req);
+    if (video.teacher_id !== teacherId) return res.status(403).json({ error: "无权访问该视频" });
+
+    const mimeType = req.body?.mime_type || "audio/wav";
+    const objectKey = audioObjectKey({
+      teacherId,
+      lessonId: video.lesson_id,
+      taskId: video.id
+    });
+    const updated = await query(`
+      update lesson_videos
+      set audio_bucket = $2,
+          audio_object_key = $3,
+          audio_mime_type = $4,
+          audio_upload_status = 'pending',
+          updated_at = now()
+      where id = $1
+      returning *
+    `, [video.id, config.r2.bucket, objectKey, mimeType]);
+    const uploadUrl = await createUploadUrl({ objectKey, mimeType });
+    res.status(201).json({
+      video_id: updated.rows[0].id,
+      upload_url: uploadUrl,
+      method: "PUT",
+      headers: { "Content-Type": mimeType },
+      object_key: objectKey,
+      expires_in: 900
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/videos/:videoId/complete-audio-upload", async (req, res, next) => {
+  try {
+    const videoResult = await query("select * from lesson_videos where id = $1", [req.params.videoId]);
+    const video = videoResult.rows[0];
+    if (!video) return res.status(404).json({ error: "video not found" });
+    const teacherId = await getTeacherId(req);
+    if (video.teacher_id !== teacherId) return res.status(403).json({ error: "无权访问该视频" });
+    if (!video.audio_object_key) return res.status(400).json({ error: "还没有创建音频上传地址" });
+
+    await assertObjectExists(video.audio_object_key);
+    const updated = await query(`
+      update lesson_videos
+      set audio_upload_status = 'uploaded',
+          updated_at = now()
+      where id = $1
+      returning *
+    `, [video.id]);
+    res.json({ video_id: updated.rows[0].id, audio_upload_status: updated.rows[0].audio_upload_status });
   } catch (error) {
     next(error);
   }
