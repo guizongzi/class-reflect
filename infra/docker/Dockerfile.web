@@ -1,0 +1,19 @@
+FROM node:22-bookworm-slim AS base
+
+WORKDIR /app
+
+RUN corepack enable
+
+COPY package.json pnpm-workspace.yaml turbo.json tsconfig.base.json eslint.config.js ./
+COPY apps ./apps
+COPY packages ./packages
+
+RUN pnpm install --lockfile=false
+RUN pnpm build
+
+ENV NODE_ENV=production
+ENV PORT=8080
+
+EXPOSE 8080
+
+CMD ["pnpm", "--filter", "@class-reflect/web", "start"]

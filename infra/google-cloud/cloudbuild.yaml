@@ -1,7 +1,8 @@
 substitutions:
   _REGION: asia-southeast1
   _REPOSITORY: class-reflect
-  _SERVICE: class-reflect-api
+  _API_SERVICE: class-reflect-api
+  _WEB_SERVICE: class-reflect-web
   _WORKER_JOB: class-reflect-worker
 
 steps:
@@ -9,24 +10,38 @@ steps:
     args:
       - build
       - -f
-      - infra/docker/Dockerfile
+      - infra/docker/Dockerfile.api
       - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
       - .
 
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - infra/docker/Dockerfile.web
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
       - run
       - deploy
-      - ${_SERVICE}
+      - ${_API_SERVICE}
       - --image
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
       - --region
       - ${_REGION}
       - --platform
@@ -37,11 +52,33 @@ steps:
       - --cpu
       - "2"
       - --timeout
-      - 3600
+      - "3600"
       - --set-env-vars
-      - NODE_ENV=production,ASR_PROVIDER=aliyun,ALIYUN_ASR_MODEL=qwen3-asr-flash-filetrans,ALIYUN_ASR_BASE_URL=https://dashscope.aliyuncs.com/api/v1,ALIYUN_ASR_POLL_INTERVAL_MS=3000,ALIYUN_ASR_TIMEOUT_MS=600000,ALIYUN_ASR_FILE_URL_EXPIRES_SECONDS=3600
+      - NODE_ENV=production,ASR_PROVIDER=aliyun
       - --set-secrets
       - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_WEB_SERVICE}
+      - --image
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID
+      - --region
+      - ${_REGION}
+      - --platform
+      - managed
+      - --allow-unauthenticated
+      - --memory
+      - 1Gi
+      - --cpu
+      - "1"
+      - --timeout
+      - "300"
+      - --set-env-vars
+      - NODE_ENV=production,NEXT_PUBLIC_API_BASE_URL=https://${_API_SERVICE}-113773741484.${_REGION}.run.app
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
@@ -51,7 +88,7 @@ steps:
       - deploy
       - ${_WORKER_JOB}
       - --image
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
       - --region
       - ${_REGION}
       - --memory
@@ -59,15 +96,16 @@ steps:
       - --cpu
       - "2"
       - --task-timeout
-      - 3600
+      - "3600"
       - --command
-      - npm
+      - pnpm
       - --args
-      - run,worker:once
+      - --filter,@class-reflect/worker,start,--,--once
       - --set-env-vars
-      - NODE_ENV=production,ASR_PROVIDER=aliyun,ALIYUN_ASR_MODEL=qwen3-asr-flash-filetrans,ALIYUN_ASR_BASE_URL=https://dashscope.aliyuncs.com/api/v1,ALIYUN_ASR_POLL_INTERVAL_MS=3000,ALIYUN_ASR_TIMEOUT_MS=600000,ALIYUN_ASR_FILE_URL_EXPIRES_SECONDS=3600
+      - NODE_ENV=production,ASR_PROVIDER=aliyun
       - --set-secrets
       - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
 
 images:
-  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID

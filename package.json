@@ -1,34 +1,22 @@
 {
-  "name": "class-reflect",
-  "version": "0.2.0",
+  "name": "classroom-review-system",
+  "version": "0.3.0",
   "private": true,
-  "type": "module",
+  "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "start": "node apps/api/index.js",
-    "dev": "node --watch apps/api/index.js",
-    "web:dev": "vite --host 0.0.0.0",
-    "web:build": "vite build",
-    "web:preview": "vite preview --host 0.0.0.0",
-    "worker": "node apps/worker/index.js",
-    "worker:once": "node apps/worker/index.js --once",
-    "db:init": "node apps/api/scripts/init-db.js",
-    "check": "node --check apps/api/index.js && node --check apps/api/processor.js && node --check apps/api/storage.js && node --check apps/api/asr.js && node --check apps/api/db.js && node --check apps/api/scripts/init-db.js && node --check apps/worker/index.js && tsc -p apps/web/tsconfig.json --noEmit && vite build"
-  },
-  "dependencies": {
-    "@aws-sdk/client-s3": "^3.744.0",
-    "@aws-sdk/s3-request-presigner": "^3.744.0",
-    "dotenv": "^16.4.7",
-    "express": "^4.19.2",
-    "pg": "^8.13.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "zustand": "^4.5.5"
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "check": "turbo check",
+    "lint": "turbo lint",
+    "api:dev": "pnpm --filter @class-reflect/api dev",
+    "web:dev": "pnpm --filter @class-reflect/web dev",
+    "worker:dev": "pnpm --filter @class-reflect/worker dev",
+    "worker:once": "pnpm --filter @class-reflect/worker start -- --once"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.7",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5"
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
   }
 }

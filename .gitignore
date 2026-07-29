@@ -1,5 +1,10 @@
 node_modules/
 dist/
+.turbo/
+.pnpm-store/
+.next/
+apps/*/dist/
+packages/*/dist/
 apps/web/dist/
 __pycache__/
 *.py[cod]

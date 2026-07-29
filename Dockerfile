@@ -1,21 +1,19 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim AS base
 
 WORKDIR /app
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+RUN corepack enable
 
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json pnpm-workspace.yaml turbo.json tsconfig.base.json eslint.config.js ./
+COPY apps ./apps
+COPY packages ./packages
 
-COPY . .
-RUN npm run web:build
-RUN npm prune --omit=dev
+RUN pnpm install --lockfile=false
+RUN pnpm build
 
 ENV NODE_ENV=production
 ENV PORT=8080
 
 EXPOSE 8080
 
-CMD ["npm", "start"]
+CMD ["pnpm", "--filter", "@class-reflect/api", "start"]
