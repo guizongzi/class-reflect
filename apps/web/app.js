@@ -27,7 +27,8 @@ const el = {
   saveRecord: document.querySelector("#saveRecord"),
   markImportant: document.querySelector("#markImportant"),
   markConfusing: document.querySelector("#markConfusing"),
-  reanalyzeSegment: document.querySelector("#reanalyzeSegment")
+  reanalyzeSegment: document.querySelector("#reanalyzeSegment"),
+  recordTabs: document.querySelectorAll(".record-tab")
 };
 
 render();
@@ -67,6 +68,14 @@ el.editRecord.addEventListener("click", () => el.recordEditor.focus());
 el.markImportant.addEventListener("click", () => tagCurrentSection("重点"));
 el.markConfusing.addEventListener("click", () => tagCurrentSection("困惑"));
 el.reanalyzeSegment.addEventListener("click", () => rebuildSections());
+el.recordTabs.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.recordView = button.dataset.view || "zh";
+    state.dirty = false;
+    state.lastRenderedSectionId = null;
+    render();
+  });
+});
 
 document.querySelector("#prevSegment").addEventListener("click", () => selectSection(Math.max(0, state.currentSectionIndex - 1)));
 document.querySelector("#nextSegment").addEventListener("click", () => selectSection(Math.min(state.sections.length - 1, state.currentSectionIndex + 1)));
@@ -100,7 +109,14 @@ function createInitialState() {
     goal: saved?.goal || "",
     messages: [],
     sections: [],
+    transcriptSegments: [],
     evidenceCards: [],
+    report: null,
+    analysisStatus: "idle",
+    analysisError: "",
+    translationStatus: "idle",
+    translationError: "",
+    recordView: "zh",
     workflowSteps: [],
     resume: null,
     library: [],
@@ -306,8 +322,10 @@ function writeString(view, offset, value) {
 
 async function loadLesson() {
   const lesson = await api(`/api/lessons/${state.lessonId}`);
-  state.sections = (lesson.sections || []).map(normalizeSection);
+  state.transcriptSegments = lesson.transcript_segments || [];
+  state.sections = (lesson.sections || []).map((section) => normalizeSection(section, state.transcriptSegments));
   state.evidenceCards = lesson.evidence_cards || [];
+  state.report = null;
   state.videoUrl = lesson.playback_url || state.videoUrl;
   state.currentSectionIndex = 0;
   state.dirty = false;
@@ -315,6 +333,10 @@ async function loadLesson() {
 }
 
 async function saveCurrentSection({ force = false } = {}) {
+  if (state.recordView !== "zh") {
+    if (force) el.saveStatus.textContent = "译文视图仅供查看，请回到原文记录后编辑保存";
+    return;
+  }
   if (!state.dirty && !force) return;
   const section = state.sections[state.currentSectionIndex];
   if (!section?.id) return;
@@ -324,7 +346,7 @@ async function saveCurrentSection({ force = false } = {}) {
       method: "PATCH",
       body: { edited_summary_text: el.recordEditor.value, review_status: "已校订" }
     });
-    state.sections[state.currentSectionIndex] = normalizeSection(saved);
+    state.sections[state.currentSectionIndex] = normalizeSection(saved, state.transcriptSegments);
     state.dirty = false;
     state.lastRenderedSectionId = saved.id;
     el.saveStatus.textContent = "已保存到后端";
@@ -338,7 +360,7 @@ async function rebuildSections() {
   try {
     el.saveStatus.textContent = "正在按最新逐字稿重建分段...";
     const result = await api(`/api/lessons/${state.lessonId}/rebuild-sections`, { method: "POST" });
-    state.sections = (result.sections || []).map(normalizeSection);
+    state.sections = (result.sections || []).map((section) => normalizeSection(section, state.transcriptSegments));
     state.currentSectionIndex = 0;
     render();
   } catch (error) {
@@ -375,6 +397,9 @@ async function selectSection(index) {
 function syncStep() {
   if (state.processingStatus === "uploading" || state.processingStatus === "queued" || state.processingStatus === "running") state.step = 2;
   else if (state.processingStatus === "failed") state.step = 2;
+  else if (state.report) state.step = 6;
+  else if (state.evidenceCards.some((card) => ["已接受", "已修改"].includes(card.review_status))) state.step = 5;
+  else if (state.evidenceCards.length) state.step = 4;
   else if (state.sections.length) state.step = 3;
   else if (state.goal) state.step = 1;
   else state.step = 1;
@@ -405,8 +430,10 @@ async function openLesson(lessonId) {
   state.workflowSteps = status.steps || [];
   state.resume = status.resume || null;
   state.videoUrl = lesson.playback_url;
-  state.sections = (lesson.sections || []).map(normalizeSection);
+  state.transcriptSegments = lesson.transcript_segments || [];
+  state.sections = (lesson.sections || []).map((section) => normalizeSection(section, state.transcriptSegments));
   state.evidenceCards = lesson.evidence_cards || [];
+  state.report = null;
   state.currentSectionIndex = 0;
   state.view = "workspace";
   syncStep();
@@ -512,16 +539,24 @@ function renderRecord() {
   const section = state.sections[state.currentSectionIndex];
   el.recordEditor.disabled = !section;
   if (!section) {
+    el.recordEditor.readOnly = false;
     el.recordEditor.value = "上传视频并完成语音转文字后，这里会生成带时间轴的大段课堂记录。你只需要编辑有问题的段落，不需要逐句确认。";
     el.saveStatus.textContent = "等待处理";
     state.lastRenderedSectionId = null;
     return;
   }
   if (!state.dirty || state.lastRenderedSectionId !== section.id) {
-    el.recordEditor.value = section.text;
+    el.recordEditor.value = sectionTextForView(section, state.recordView);
     state.lastRenderedSectionId = section.id;
   }
-  el.saveStatus.textContent = state.dirty ? "有未保存修改" : `${section.reviewStatus || "待校订"} · 可整段编辑后保存`;
+  el.recordTabs.forEach((button) => {
+    button.classList.toggle("active", button.dataset.view === state.recordView);
+  });
+  const editable = state.recordView === "zh";
+  el.recordEditor.readOnly = !editable;
+  el.saveStatus.textContent = state.dirty
+    ? "有未保存修改"
+    : editable ? `${section.reviewStatus || "待校订"} · 可整段编辑后保存` : "译文视图暂不直接编辑";
 }
 
 function renderFlow() {
@@ -543,16 +578,48 @@ function renderConversation() {
   if (state.sections.length) {
     cards.push(ai("我已生成大段课堂记录。你可以直接修改整段内容，不需要逐句确认。修改后会保存到后端。"));
     cards.push(processCard("校订原文", `${state.sections.length} 个课堂片段`, "带时间轴，可用于判断语速和长停顿。"));
+    cards.push(translationCard());
   }
 
   if (!state.evidenceCards.length && state.sections.length) {
-    cards.push(processCard("基础记录已就绪", "尚未运行真实 AI 教学分析", "下一步应接入 modules/analysis，由 LLM 从大段记录中拆出关键证据段落。"));
+    const run = `<button class="primary-button inline-action" type="button" data-run-analysis>开始多 Agent 分析</button>`;
+    const note = state.analysisStatus === "running"
+      ? "事实观察 Agent、证据分析 Agent、改进建议 Agent 正在协作生成候选证据卡。"
+      : `将从已校订大段记录中拆出关键证据段落。${run}`;
+    cards.push(processCard("基础记录已就绪", state.analysisStatus === "running" ? "正在运行多 Agent 分析" : "尚未运行真实 AI 教学分析", note, { htmlNote: true }));
+  }
+
+  if (state.evidenceCards.length) {
+    cards.push(ai("我已生成候选证据卡。请逐条接受、修改或驳回；只有已接受/已修改的内容会进入报告。"));
+    cards.push(...state.evidenceCards.map(renderEvidenceCard));
+    const acceptedCount = state.evidenceCards.filter((card) => ["已接受", "已修改"].includes(card.review_status)).length;
+    cards.push(processCard("生成教学报告", `${acceptedCount} 条已确认`, `<button class="primary-button inline-action" type="button" data-generate-report>${state.report ? "重新生成报告" : "生成报告"}</button>${state.report ? `<small class="report-ready">报告已生成，报告文件已保存到对象存储。</small>` : ""}`, { htmlNote: true }));
+  }
+
+  if (state.report?.markdown_content) {
+    cards.push(processCard("报告预览", "已生成教学报告", `<pre class="report-preview">${escapeHtml(state.report.markdown_content)}</pre>`, { htmlNote: true }));
+  }
+
+  if (state.analysisError) {
+    cards.push(processCard("AI 分析失败", state.analysisError, "请确认 LLM 配置有效，或调整复盘问题后重试。"));
   }
 
   if (state.error) cards.push(processCard("处理失败", state.error, "可以从当前失败步骤重试，不需要重新上传视频。"));
   el.conversation.innerHTML = cards.join("");
   el.conversation.querySelectorAll("[data-retry-video]").forEach((button) => {
     button.addEventListener("click", () => retryProcessing());
+  });
+  el.conversation.querySelectorAll("[data-run-analysis]").forEach((button) => {
+    button.addEventListener("click", () => runAnalysis());
+  });
+  el.conversation.querySelectorAll("[data-translate-lesson]").forEach((button) => {
+    button.addEventListener("click", () => translateLesson());
+  });
+  el.conversation.querySelectorAll("[data-review-card]").forEach((button) => {
+    button.addEventListener("click", () => reviewEvidence(button.dataset.reviewCard, button.dataset.reviewStatus));
+  });
+  el.conversation.querySelectorAll("[data-generate-report]").forEach((button) => {
+    button.addEventListener("click", () => generateReport());
   });
 }
 
@@ -591,6 +658,43 @@ function processCard(title, value, note, options = {}) {
   return `<div class="process-card"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(value)}</p><div class="process-note">${options.htmlNote ? note : escapeHtml(note)}</div></div>`;
 }
 
+function renderEvidenceCard(card) {
+  const conclusion = card.edited_conclusion || card.conclusion;
+  const status = card.review_status || "待复核";
+  return `
+    <div class="evidence-card">
+      <div class="evidence-card-head">
+        <strong>${escapeHtml(card.evidence_type || "证据")}</strong>
+        <span>${escapeHtml(status)}</span>
+      </div>
+      <p>${escapeHtml(conclusion)}</p>
+      <blockquote>${escapeHtml(card.quote_text || "暂无原文引用")}</blockquote>
+      <small>${clock(card.start_ms)}-${clock(card.end_ms)} · ${escapeHtml(card.confidence_label || "需要复核")}</small>
+      ${card.suggestion ? `<div class="suggestion">${escapeHtml(card.suggestion)}</div>` : ""}
+      <div class="card-actions">
+        <button class="light-button" type="button" data-review-card="${card.id}" data-review-status="已接受">接受</button>
+        <button class="light-button" type="button" data-review-card="${card.id}" data-review-status="已修改">修改后接受</button>
+        <button class="danger-button" type="button" data-review-card="${card.id}" data-review-status="已驳回">驳回</button>
+      </div>
+    </div>
+  `;
+}
+
+function translationCard() {
+  const translatedCount = state.transcriptSegments.filter((segment) => segment.translated_text).length;
+  const totalCount = state.transcriptSegments.length;
+  const hasTranslations = translatedCount > 0;
+  const label = state.translationStatus === "running"
+    ? "正在生成中文翻译"
+    : hasTranslations ? `已翻译 ${translatedCount}/${totalCount} 条` : "未生成中文翻译";
+  const actionLabel = hasTranslations ? "补全/重新生成翻译" : "生成中文翻译";
+  const error = state.translationError ? `<small class="error-text">${escapeHtml(state.translationError)}</small>` : "";
+  const button = state.translationStatus === "running"
+    ? ""
+    : `<button class="primary-button inline-action" type="button" data-translate-lesson>${actionLabel}</button>`;
+  return processCard("中文翻译", label, `英文或双语课堂需要时再生成；中文课可以不翻译。${button}${error}`, { htmlNote: true });
+}
+
 function renderBackendSteps() {
   if (!state.workflowSteps?.length) return "";
   return `<ol class="backend-steps">${state.workflowSteps.map((step) => `
@@ -615,6 +719,77 @@ async function retryProcessing() {
     pollStatus();
   } catch (error) {
     fail(error.message || "继续处理失败");
+  }
+}
+
+async function translateLesson() {
+  if (!state.lessonId) return;
+  try {
+    state.translationStatus = "running";
+    state.translationError = "";
+    render();
+    await api(`/api/lessons/${state.lessonId}/translate`, {
+      method: "POST",
+      body: { force: false }
+    });
+    await loadLesson();
+    state.translationStatus = "completed";
+    state.recordView = "both";
+    render();
+  } catch (error) {
+    state.translationStatus = "failed";
+    state.translationError = error.message || "翻译失败";
+    render();
+  }
+}
+
+async function runAnalysis() {
+  if (!state.lessonId) return;
+  try {
+    state.analysisStatus = "running";
+    state.analysisError = "";
+    render();
+    const result = await api(`/api/lessons/${state.lessonId}/analyze`, {
+      method: "POST",
+      body: { goal: state.goal }
+    });
+    state.evidenceCards = result.evidence_cards || [];
+    state.analysisStatus = "completed";
+    syncStep();
+    render();
+  } catch (error) {
+    state.analysisStatus = "failed";
+    state.analysisError = error.message || "AI 分析失败";
+    render();
+  }
+}
+
+async function reviewEvidence(cardId, reviewStatus) {
+  if (!cardId) return;
+  try {
+    const saved = await api(`/api/evidence-cards/${cardId}/review`, {
+      method: "PATCH",
+      body: { review_status: reviewStatus }
+    });
+    state.evidenceCards = state.evidenceCards.map((card) => card.id === cardId ? saved : card);
+    syncStep();
+    render();
+  } catch (error) {
+    state.analysisError = error.message || "复核保存失败";
+    render();
+  }
+}
+
+async function generateReport() {
+  if (!state.lessonId) return;
+  try {
+    const report = await api(`/api/lessons/${state.lessonId}/reports`, { method: "POST" });
+    state.report = report;
+    syncStep();
+    render();
+  } catch (error) {
+    state.analysisError = error.message || "报告生成失败";
+    render();
   }
 }
 
@@ -648,16 +823,45 @@ function putFile(url, file, contentType, onProgress) {
   });
 }
 
-function normalizeSection(section) {
+function normalizeSection(section, transcriptSegments = []) {
+  const segments = transcriptSegments.filter((segment) =>
+    Number(segment.start_ms) >= Number(section.start_ms) &&
+    Number(segment.end_ms) <= Number(section.end_ms)
+  );
   return {
     id: section.id,
     startMs: section.start_ms ?? section.startMs ?? 0,
     endMs: section.end_ms ?? section.endMs ?? 0,
     title: section.title || "课堂片段",
     text: section.edited_summary_text || section.summary_text || section.text || "",
+    translatedText: formatTranslatedSegments(segments),
+    bilingualText: formatBilingualSegments(segments),
     tags: Array.isArray(section.tags) ? section.tags : [],
     reviewStatus: section.review_status || "待校订"
   };
+}
+
+function sectionTextForView(section, view) {
+  if (view === "en") return section.translatedText || "还没有生成中文翻译。";
+  if (view === "both") return section.bilingualText || section.translatedText || section.text;
+  return section.text;
+}
+
+function formatTranslatedSegments(segments) {
+  return segments
+    .filter((segment) => segment.translated_text)
+    .map((segment) => `${clock(segment.start_ms)}-${clock(segment.end_ms)} ${segment.speaker_label || "未知"}：${segment.translated_text}`)
+    .join("\n");
+}
+
+function formatBilingualSegments(segments) {
+  return segments
+    .map((segment) => {
+      const original = `${clock(segment.start_ms)}-${clock(segment.end_ms)} ${segment.speaker_label || "未知"}：${segment.original_text || ""}`;
+      const translated = segment.translated_text ? `中文：${segment.translated_text}` : "中文：未生成";
+      return `${original}\n${translated}`;
+    })
+    .join("\n\n");
 }
 
 function fail(message) {

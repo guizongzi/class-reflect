@@ -7,6 +7,7 @@ import { assertObjectExists, audioObjectKey, createReadUrl, createUploadUrl, del
 import { buildLessonSections, LESSON_ANALYSIS_STEPS } from "./processor.js";
 import { assertLessonOwner, getTeacherId } from "./auth.js";
 import { transcribeAudio } from "./asr.js";
+import { generateEvidenceCards, translateTranscriptSegments } from "./llm.js";
 
 assertRuntimeConfig();
 
@@ -550,6 +551,110 @@ app.post("/api/lessons/:lessonId/rebuild-sections", async (req, res, next) => {
   }
 });
 
+app.post("/api/lessons/:lessonId/analyze", async (req, res, next) => {
+  try {
+    const lesson = (await query("select * from lessons where id = $1", [req.params.lessonId])).rows[0];
+    if (!lesson) return res.status(404).json({ error: "lesson not found" });
+    const teacherId = await getTeacherId(req);
+    assertLessonOwner(lesson, teacherId);
+
+    const video = (await query("select * from lesson_videos where lesson_id = $1 order by created_at desc limit 1", [lesson.id])).rows[0];
+    if (!video) return res.status(400).json({ error: "还没有课堂视频" });
+    const sections = (await query(`
+      select *
+      from lesson_sections
+      where lesson_id = $1 and video_id = $2
+      order by start_ms
+    `, [lesson.id, video.id])).rows;
+    if (!sections.length) return res.status(400).json({ error: "请先完成语音转文字和课堂记录校订" });
+
+    const goal = String(req.body?.goal || "").trim() || "复盘课堂节奏、提问互动、学生理解线索和下节课改进点";
+    const cards = await generateEvidenceCards({ lesson, sections, goal });
+    if (!cards.length) return res.status(422).json({ error: "AI 没有生成可复核证据卡，请调整复盘问题后重试" });
+
+    const saved = await withTransaction(async (client) => {
+      const task = await client.query(`
+        insert into analysis_tasks (lesson_id, video_id, task_type, status, progress, current_step, started_at, finished_at)
+        values ($1, $2, 'teaching_evidence_analysis', 'completed', 100, 'evidence_cards', now(), now())
+        returning *
+      `, [lesson.id, video.id]);
+      const rows = [];
+      for (const card of cards) {
+        const inserted = await client.query(`
+          insert into evidence_cards
+            (lesson_id, video_id, task_id, section_id, evidence_type, conclusion, suggestion, start_ms, end_ms, quote_text, confidence_label, source_model, raw_json)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          returning *
+        `, [
+          lesson.id,
+          video.id,
+          task.rows[0].id,
+          card.sectionId,
+          card.evidenceType,
+          card.conclusion,
+          card.suggestion || null,
+          card.startMs,
+          card.endMs,
+          card.quoteText || null,
+          card.confidenceLabel,
+          config.llm.model,
+          JSON.stringify(card.raw || {})
+        ]);
+        rows.push(inserted.rows[0]);
+      }
+      await client.query("update lessons set updated_at = now() where id = $1", [lesson.id]);
+      return rows;
+    });
+
+    res.status(201).json({ evidence_cards: saved });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/lessons/:lessonId/translate", async (req, res, next) => {
+  try {
+    const lesson = (await query("select * from lessons where id = $1", [req.params.lessonId])).rows[0];
+    if (!lesson) return res.status(404).json({ error: "lesson not found" });
+    const teacherId = await getTeacherId(req);
+    assertLessonOwner(lesson, teacherId);
+
+    const force = Boolean(req.body?.force);
+    const segments = (await query(`
+      select *
+      from transcript_segments
+      where lesson_id = $1
+        and length(trim(coalesce(original_text, ''))) > 0
+        and ($2::boolean or translated_text is null or length(trim(translated_text)) = 0)
+      order by start_ms
+    `, [lesson.id, force])).rows;
+    if (!segments.length) {
+      return res.json({ translated_count: 0, message: "没有需要翻译的逐字稿" });
+    }
+
+    const translations = await translateTranscriptSegments({ lesson, segments });
+    const saved = await withTransaction(async (client) => {
+      let count = 0;
+      for (const item of translations) {
+        const updated = await client.query(`
+          update transcript_segments
+          set translated_text = $2,
+              raw_translated_text = coalesce(raw_translated_text, $2),
+              updated_at = now()
+          where id = $1 and lesson_id = $3
+        `, [item.id, item.translatedText, lesson.id]);
+        count += updated.rowCount;
+      }
+      await client.query("update lessons set updated_at = now() where id = $1", [lesson.id]);
+      return count;
+    });
+
+    res.status(201).json({ translated_count: saved });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.patch("/api/evidence-cards/:cardId/review", async (req, res, next) => {
   try {
     const { review_status, edited_conclusion, teacher_note } = req.body || {};
@@ -563,6 +668,7 @@ app.patch("/api/evidence-cards/:cardId/review", async (req, res, next) => {
       where id = $1 and lesson_id in (select id from lessons where teacher_id = $5)
       returning *
     `, [req.params.cardId, review_status || null, edited_conclusion || null, teacher_note || null, teacherId]);
+    if (!result.rows[0]) return res.status(404).json({ error: "evidence card not found" });
     res.json(result.rows[0]);
   } catch (error) {
     next(error);
