@@ -1,27 +1,28 @@
 # 课堂复盘与教学分析系统
 
-第一版聚焦一条完整功能链：对话发起复盘任务、上传课堂视频、基于语音转文字生成大段课堂记录、运行证据链分析、教师复核结论、导出报告。
+第一版聚焦一条真实可跑通的基础链路：对话发起复盘任务、上传课堂视频、持久保存到对象存储、基于语音转文字生成带时间轴的课堂记录、教师校订文本、导出基础课堂记录报告。
 
 ## 已完成范围
 
 - 真实问题与用户场景说明。
 - 对话式任务发起和快捷复盘目标。
-- 课堂视频上传、播放器预览和按语音证据时间定位。
-- 课堂片段时间轴与大段课堂记录编辑。
+- 课堂视频上传、对象存储持久保存、播放器预览。
+- 带时间轴的 ASR 逐字稿入库。
+- 按时间、停顿和课堂活动边界聚合的大段课堂记录。
+- 大段课堂记录编辑并保存到后端。
+- 原始逐字稿小段编辑接口，支持后续接入时间轴编辑器。
 - 对话式 AI 任务助手，嵌入处理过程、证据、复核和报告卡片。
-- 基于逐字稿的可重复分析演示，不是固定录像或写死结果。
-- 事实 / 判断 / 建议三类证据链卡片。
-- 教师接受、修改、驳回结论。
-- 只导出已接受或已修改内容的 Markdown 报告。
+- 处理状态、失败原因和从失败步骤重试。
+- 不依赖 AI 的基础 Markdown 课堂记录报告。
 - 电脑端和手机端响应式布局。
 
 ## 第一版创新点
 
-系统不做自动打分，而是做“证据链式课堂复盘”。每条 AI 结论都必须绑定视频时间点和课堂原文，并经过教师确认后才能进入报告。第一版不做视频 OCR、画面证据框选或课件分析，只基于语音转文字与时间戳分析。
+系统不做自动打分，而是先做“可追溯课堂记录底座”。第一版不伪造 AI 结论，先确保视频、对象存储、ASR 时间轴、文本校订和基础报告真实可用。后续 AI 教学分析必须基于已保存的时间轴逐字稿生成，并经过教师确认后才能进入分析报告。
 
 ## 模拟与真实后端
 
-前端仍保留 localStorage 演示数据，方便没有后端环境时预览完整交互。接入后端后，视频会先直传 Cloudflare R2，Supabase PostgreSQL 只保存文件归属、对象地址和处理状态，后端再从 R2 读取视频完成音频抽取、语音识别和证据分析。
+前端仍保留 localStorage 演示数据，方便没有后端环境时预览界面。接入后端后，视频会先直传 Cloudflare R2，Supabase PostgreSQL 只保存文件归属、对象地址、处理状态、逐字稿、课堂分段和校订结果，后端再从 R2 读取视频完成音频抽取和语音识别。
 
 ## 平台分工
 
@@ -35,12 +36,12 @@
 
 ## 本地运行
 
-直接打开 `index.html` 即可使用。
+直接打开 `apps/web/index.html` 即可预览前端界面。
 
 如需用本地服务预览：
 
 ```bash
-python3 -m http.server 8080
+python3 -m http.server 8080 --directory apps/web
 ```
 
 然后访问：
@@ -82,7 +83,7 @@ LLM_MODEL=qwen-plus
 FRONTEND_ORIGIN=https://你的前端域名
 ```
 
-真实 ASR 流程：后端抽取 wav 音频后上传到 R2，生成临时读取 URL，提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。
+真实 ASR 流程：后端抽取 wav 音频后上传到 R2，生成临时读取 URL，提交给 `qwen3-asr-flash-filetrans`，轮询 DashScope 任务，下载 `transcription_url` 里的 JSON，并把 `sentences[].begin_time/end_time/text` 写入逐字稿表。课堂记录中的每一行都会保留 `开始时间-结束时间`，长停顿会显示停顿提示。
 
 4. 安装依赖并初始化数据库：
 
@@ -181,7 +182,7 @@ gcloud artifacts repositories create class-reflect \
 4. 用 Cloud Build 构建和部署：
 
 ```bash
-gcloud builds submit --config cloudbuild.yaml
+gcloud builds submit --config infra/google-cloud/cloudbuild.yaml
 ```
 
 5. 部署后确认 Cloud Run 的 Variables & Secrets 中已绑定：
@@ -198,6 +199,14 @@ https://你的-cloud-run-url/api/health
 
 返回 `ok: true` 后，再初始化数据库并测试上传链路。
 
+如果数据库之前已经初始化过，也需要重新运行一次：
+
+```bash
+npm run db:init
+```
+
+这会补齐 `transcript_segments` 的人工校订字段，不会清空已有数据。
+
 可选：如果需要让 Cloud Run 直接检测阿里云 ASR，可以在 `APP_CONFIG_ENV` 里临时加入 `DEBUG_TOKEN`，重新部署后调用：
 
 ```bash
@@ -207,30 +216,4 @@ curl -X POST "https://你的-cloud-run-url/api/debug/asr-smoke-test" \
   -d '{}'
 ```
 
-接口会使用线上同一套 Secret 和网络，转写一个公开测试音频，并返回前几段逐字稿。调试结束后建议删除 `DEBUG_TOKEN` 或换成不可猜测的长随机值。
-
-## GitHub Pages 部署
-
-1. 将本仓库推送到 GitHub。
-2. 进入 GitHub 仓库的 Settings。
-3. 打开 Pages。
-4. Source 选择 `Deploy from a branch`。
-5. Branch 选择 `main`，目录选择 `/root`。
-6. 保存后等待部署完成。
-
-## 测试方式
-
-成功流程：
-
-1. 输入复盘目标。
-2. 选择一段课堂视频。
-3. 查看系统生成的大段课堂记录示例。
-4. 点击时间段，视频和课堂记录同步切换。
-5. 在右侧 AI 任务助手点击“查看依据”。
-6. 接受、修改后接受或驳回证据。
-7. 点击“预览报告”导出 Markdown。
-
-失败流程：
-
-1. 真实后端接入后，可在处理过程卡片显示失败步骤。
-2. 当前前端原型已预留“重试当前步骤 / 查看失败原因”的产品位置。
+接口会使用线上同一套 Secret 和网络，转写一个公开测试音频，并返回预览和完整逐字稿。调试结束后建议删除 `DEBUG_TOKEN` 或换成不可猜测的长随机值。

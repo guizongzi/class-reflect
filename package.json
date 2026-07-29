@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
-    "db:init": "node server/scripts/init-db.js",
-    "check": "node --check server/index.js && node --check server/processor.js && node --check server/storage.js && node --check server/asr.js && node --check server/db.js && node --check server/scripts/init-db.js && node --check app.js"
+    "start": "node apps/api/index.js",
+    "dev": "node --watch apps/api/index.js",
+    "db:init": "node apps/api/scripts/init-db.js",
+    "check": "node --check apps/api/index.js && node --check apps/api/processor.js && node --check apps/api/storage.js && node --check apps/api/asr.js && node --check apps/api/db.js && node --check apps/api/scripts/init-db.js && node --check apps/web/app.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.744.0",

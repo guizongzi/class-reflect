@@ -17,7 +17,7 @@ async function transcribeWithAliyun(audioUrl) {
 
   const taskId = await submitAliyunTranscriptionTask(audioUrl);
   const resultUrl = await waitForAliyunTranscription(taskId);
-  const result = await requestJson(resultUrl, { auth: false, phase: "result" });
+  const result = await requestJson(resultUrl, { auth: false });
   return parseAliyunTranscriptionResult(result);
 }
 

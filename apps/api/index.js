@@ -12,7 +12,7 @@ assertRuntimeConfig();
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.resolve(__dirname, "..");
+const webDir = path.resolve(__dirname, "../web");
 
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", config.frontendOrigin);
@@ -23,7 +23,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(rootDir));
+app.use(express.static(webDir));
 
 app.get("/api/health", (req, res) => {
   res.json({
