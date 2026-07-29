@@ -1,0 +1,20 @@
+{
+  "name": "class-reflect",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "db:init": "node server/scripts/init-db.js",
+    "check": "node --check server/index.js && node --check server/processor.js && node --check server/storage.js && node --check server/asr.js && node --check server/db.js && node --check server/scripts/init-db.js && node --check app.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.744.0",
+    "@aws-sdk/s3-request-presigner": "^3.744.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.19.2",
+    "openai": "^4.82.0",
+    "pg": "^8.13.1"
+  }
+}
