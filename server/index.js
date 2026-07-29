@@ -6,6 +6,7 @@ import { query, withTransaction } from "./db.js";
 import { assertObjectExists, createReadUrl, createUploadUrl, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
 import { enqueueVideoProcessing } from "./processor.js";
 import { assertLessonOwner, getTeacherId } from "./auth.js";
+import { transcribeAudio } from "./asr.js";
 
 assertRuntimeConfig();
 
@@ -34,6 +35,29 @@ app.get("/api/health", (req, res) => {
     asr_base_url: config.aliyun.asrBaseUrl,
     asr_key_hint: maskSecret(config.aliyun.dashscopeApiKey)
   });
+});
+
+app.post("/api/debug/asr-smoke-test", async (req, res, next) => {
+  try {
+    if (!config.debugToken) return res.status(404).json({ error: "debug endpoint is disabled" });
+    if (req.headers["x-debug-token"] !== config.debugToken) return res.status(403).json({ error: "invalid debug token" });
+
+    const audioUrl = req.body?.audio_url || "https://paddlespeech.cdn.bcebos.com/datasets/single_wav/en/demo_002_en.wav";
+    const startedAt = Date.now();
+    const segments = await transcribeAudio(null, { audioUrl });
+    res.json({
+      ok: true,
+      audio_url: audioUrl,
+      elapsed_ms: Date.now() - startedAt,
+      asr_provider: config.asrProvider,
+      asr_model: config.aliyun.asrModel,
+      asr_base_url: config.aliyun.asrBaseUrl,
+      segment_count: segments.length,
+      preview: segments.slice(0, 5)
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/lessons", async (req, res, next) => {
