@@ -41,12 +41,12 @@ export async function createUploadUrl({ objectKey, mimeType }) {
   return getSignedUrl(s3, command, { expiresIn: 900 });
 }
 
-export async function createReadUrl({ objectKey }) {
+export async function createReadUrl({ objectKey, expiresIn = 900 }) {
   const command = new GetObjectCommand({
     Bucket: config.r2.bucket,
     Key: objectKey
   });
-  return getSignedUrl(s3, command, { expiresIn: 900 });
+  return getSignedUrl(s3, command, { expiresIn });
 }
 
 export async function assertObjectExists(objectKey) {
