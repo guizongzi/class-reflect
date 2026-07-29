@@ -24,6 +24,14 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(rootDir));
 
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "class-reflect",
+    asr_provider: config.asrProvider
+  });
+});
+
 app.post("/api/lessons", async (req, res, next) => {
   try {
     const {
