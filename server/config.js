@@ -38,6 +38,7 @@ export const config = {
     apiKey: readConfig("LLM_API_KEY", "llm.apiKey"),
     model: readConfig("LLM_MODEL", "llm.model")
   },
+  debugToken: readConfig("DEBUG_TOKEN", "debugToken"),
   ffmpegPath: readConfig("FFMPEG_PATH", "ffmpegPath") || "ffmpeg"
 };
 
