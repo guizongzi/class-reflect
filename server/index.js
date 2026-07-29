@@ -248,7 +248,7 @@ app.listen(config.port, () => {
 });
 
 function makeStepStatus(task) {
-  const order = ["download_video", "extract_audio", "asr", "write_transcript", "completed"];
+  const order = ["download_video", "extract_audio", "upload_audio", "asr", "write_transcript", "completed"];
   return order.map((key) => ({
     key,
     status: !task ? "waiting" : task.current_step === key ? "running" : order.indexOf(key) < order.indexOf(task.current_step) || task.status === "completed" ? "completed" : "waiting"
