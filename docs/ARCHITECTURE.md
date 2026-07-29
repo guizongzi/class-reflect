@@ -63,31 +63,33 @@ web 选择视频
 → api 创建 lesson 和 video 记录
 → api 生成 Cloudflare R2 预签名上传地址
 → web 直传视频到 R2 并显示上传进度
-→ api 确认对象存在并创建处理任务
-→ processor 从 R2 读取视频
-→ ffmpeg 抽取音频
-→ ASR 生成带时间点逐字稿
-→ PostgreSQL 保存 transcript_segments 和 lesson_sections
+→ 可选：web 或媒体任务并行上传 ASR 用音频到 R2
+→ api 确认对象存在并创建 workflow_run / workflow_step_runs
+→ worker / Cloud Run Job 认领 queued workflow
+→ worker 优先使用已上传音频；没有音频时再从 R2 读取视频并调用 FFmpeg 抽取音频
+→ worker 将生成的临时音频上传回 R2
+→ worker 调用 ASR 生成带时间点逐字稿
+→ worker 将 transcript_segments 和 lesson_sections 写回 PostgreSQL
 → web 展示、编辑并保存课堂记录
 → api 导出基础课堂记录报告
 ```
 
 ## 视频处理应解耦
 
-第一版可以由 API 服务内异步处理，但架构上不应该把“上传完成后再慢慢从 R2 下载视频抽音频”写死为唯一模式。推荐拆成两个可并行或可替换的处理通道：
+第一版已经把 API 请求与音频抽取/ASR 执行解耦。API 只创建 workflow，worker / Cloud Run Job 负责认领并执行长任务。后续可以继续把媒体处理改为更并行的通道：
 
 ```text
 用户选择视频
 ├─ 通道 A：浏览器直传原始视频到 R2，保存长期归档和播放地址
-└─ 通道 B：生成临时音频或轻量媒体任务，交给后台 worker / job 做 ASR
+└─ 通道 B：浏览器、边缘任务或媒体 worker 生成 ASR 用音频，并通过独立音频上传接口进入 R2
 
 流程控制器统一记录状态：
-uploading_video / extracting_audio / uploading_audio / transcribing / writing_transcript / ready / failed
+queued / verify_upload / download_video / extract_audio / upload_audio / asr / build_sections / write_transcript / ready / failed
 ```
 
 后续可选优化：
 
-- 小视频：API worker 从 R2 拉取后用 FFmpeg 抽音频，简单可靠。
+- 小视频：worker 从 R2 拉取后用 FFmpeg 抽音频，简单可靠。
 - 大视频：前端或边缘任务同时上传视频和音频，ASR 不必等待原视频完全入库后再开始。
 - 批量高并发：Cloud Run Jobs 或队列消费者处理音频，API 只负责任务创建和状态查询。
 - 专业媒体处理：独立 Python/FFmpeg worker 处理格式转换、切片、降噪、VAD。

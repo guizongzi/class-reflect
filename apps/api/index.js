@@ -3,8 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config, assertRuntimeConfig } from "./config.js";
 import { query, withTransaction } from "./db.js";
-import { assertObjectExists, createReadUrl, createUploadUrl, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
-import { buildLessonSections, enqueueVideoProcessing } from "./processor.js";
+import { assertObjectExists, audioObjectKey, createReadUrl, createUploadUrl, reportObjectKey, uploadText, videoObjectKey } from "./storage.js";
+import { buildLessonSections, LESSON_ANALYSIS_STEPS } from "./processor.js";
 import { assertLessonOwner, getTeacherId } from "./auth.js";
 import { transcribeAudio } from "./asr.js";
 
@@ -142,11 +142,78 @@ app.post("/api/videos/:videoId/complete-upload", async (req, res, next) => {
         values ($1, $2, 'queued', 0, 'queued')
         returning *
       `, [video.lesson_id, video.id]);
-      return created.rows[0];
+      const workflow = await createQueuedWorkflowRun(client, {
+        lessonId: video.lesson_id,
+        videoId: video.id,
+        taskId: created.rows[0].id,
+        retryCount: 0,
+        reason: "upload_completed"
+      });
+      return { task: created.rows[0], workflow };
     });
 
-    enqueueVideoProcessing(task.id);
-    res.status(202).json({ task_id: task.id, status: task.status });
+    res.status(202).json({ task_id: task.task.id, workflow_run_id: task.workflow.id, status: task.task.status });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/videos/:videoId/audio-upload-url", async (req, res, next) => {
+  try {
+    const videoResult = await query("select * from lesson_videos where id = $1", [req.params.videoId]);
+    const video = videoResult.rows[0];
+    if (!video) return res.status(404).json({ error: "video not found" });
+    const teacherId = await getTeacherId(req);
+    if (video.teacher_id !== teacherId) return res.status(403).json({ error: "无权访问该视频" });
+
+    const mimeType = req.body?.mime_type || "audio/wav";
+    const objectKey = audioObjectKey({
+      teacherId,
+      lessonId: video.lesson_id,
+      taskId: video.id
+    });
+    const updated = await query(`
+      update lesson_videos
+      set audio_bucket = $2,
+          audio_object_key = $3,
+          audio_mime_type = $4,
+          audio_upload_status = 'pending',
+          updated_at = now()
+      where id = $1
+      returning *
+    `, [video.id, config.r2.bucket, objectKey, mimeType]);
+    const uploadUrl = await createUploadUrl({ objectKey, mimeType });
+    res.status(201).json({
+      video_id: updated.rows[0].id,
+      upload_url: uploadUrl,
+      method: "PUT",
+      headers: { "Content-Type": mimeType },
+      object_key: objectKey,
+      expires_in: 900
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/videos/:videoId/complete-audio-upload", async (req, res, next) => {
+  try {
+    const videoResult = await query("select * from lesson_videos where id = $1", [req.params.videoId]);
+    const video = videoResult.rows[0];
+    if (!video) return res.status(404).json({ error: "video not found" });
+    const teacherId = await getTeacherId(req);
+    if (video.teacher_id !== teacherId) return res.status(403).json({ error: "无权访问该视频" });
+    if (!video.audio_object_key) return res.status(400).json({ error: "还没有创建音频上传地址" });
+
+    await assertObjectExists(video.audio_object_key);
+    const updated = await query(`
+      update lesson_videos
+      set audio_upload_status = 'uploaded',
+          updated_at = now()
+      where id = $1
+      returning *
+    `, [video.id]);
+    res.json({ video_id: updated.rows[0].id, audio_upload_status: updated.rows[0].audio_upload_status });
   } catch (error) {
     next(error);
   }
@@ -179,11 +246,17 @@ app.post("/api/videos/:videoId/retry-processing", async (req, res, next) => {
         values ($1, $2, 'queued', 0, 'queued', $3)
         returning *
       `, [video.lesson_id, video.id, retryCount]);
-      return created.rows[0];
+      const workflow = await createQueuedWorkflowRun(client, {
+        lessonId: video.lesson_id,
+        videoId: video.id,
+        taskId: created.rows[0].id,
+        retryCount,
+        reason: "retry_processing"
+      });
+      return { task: created.rows[0], workflow };
     });
 
-    enqueueVideoProcessing(task.id);
-    res.status(202).json({ task_id: task.id, status: task.status });
+    res.status(202).json({ task_id: task.task.id, workflow_run_id: task.workflow.id, status: task.task.status });
   } catch (error) {
     next(error);
   }
@@ -200,10 +273,23 @@ app.get("/api/lessons/:lessonId/status", async (req, res, next) => {
       order by created_at desc
       limit 1
     `, [req.params.lessonId]);
+    const workflow = await query(`
+      select * from workflow_runs
+      where lesson_id = $1
+      order by created_at desc
+      limit 1
+    `, [req.params.lessonId]);
+    const workflowSteps = workflow.rows[0] ? await query(`
+      select *
+      from workflow_step_runs
+      where workflow_run_id = $1
+      order by created_at
+    `, [workflow.rows[0].id]) : { rows: [] };
     res.json({
       lesson: lesson.rows[0] || null,
       task: task.rows[0] || null,
-      steps: makeStepStatus(task.rows[0])
+      workflow: workflow.rows[0] || null,
+      steps: makeStepStatus(task.rows[0], workflowSteps.rows)
     });
   } catch (error) {
     next(error);
@@ -430,11 +516,31 @@ app.listen(config.port, () => {
   console.log(`class-reflect server listening on ${config.publicBaseUrl}`);
 });
 
-function makeStepStatus(task) {
-  const order = ["download_video", "extract_audio", "upload_audio", "asr", "write_transcript", "completed"];
+async function createQueuedWorkflowRun(client, { lessonId, videoId, taskId, retryCount, reason }) {
+  const created = await client.query(`
+    insert into workflow_runs
+      (lesson_id, video_id, task_id, workflow_type, status, progress, current_step, retry_count, input)
+    values ($1, $2, $3, 'lesson_analysis', 'queued', 0, 'queued', $4, $5)
+    returning *
+  `, [lessonId, videoId, taskId, retryCount, JSON.stringify({ reason })]);
+
+  for (const step of LESSON_ANALYSIS_STEPS) {
+    await client.query(`
+      insert into workflow_step_runs (workflow_run_id, step_key, status)
+      values ($1, $2, 'waiting')
+      on conflict (workflow_run_id, step_key) do nothing
+    `, [created.rows[0].id, step]);
+  }
+  return created.rows[0];
+}
+
+function makeStepStatus(task, workflowSteps = []) {
+  const order = LESSON_ANALYSIS_STEPS;
+  const workflowByKey = new Map(workflowSteps.map((step) => [step.step_key, step.status]));
   return order.map((key) => ({
     key,
-    status: !task ? "waiting" : task.current_step === key ? "running" : order.indexOf(key) < order.indexOf(task.current_step) || task.status === "completed" ? "completed" : "waiting"
+    status: workflowByKey.get(key) ||
+      (!task ? "waiting" : task.current_step === key ? "running" : order.indexOf(key) < order.indexOf(task.current_step) || task.status === "completed" ? "completed" : "waiting")
   }));
 }
 

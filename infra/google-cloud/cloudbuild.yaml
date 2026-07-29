@@ -2,6 +2,7 @@ substitutions:
   _REGION: asia-southeast1
   _REPOSITORY: class-reflect
   _SERVICE: class-reflect-api
+  _WORKER_JOB: class-reflect-worker
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -37,6 +38,32 @@ steps:
       - "2"
       - --timeout
       - 3600
+      - --set-env-vars
+      - NODE_ENV=production,ASR_PROVIDER=aliyun,ALIYUN_ASR_MODEL=qwen3-asr-flash-filetrans,ALIYUN_ASR_BASE_URL=https://dashscope.aliyuncs.com/api/v1,ALIYUN_ASR_POLL_INTERVAL_MS=3000,ALIYUN_ASR_TIMEOUT_MS=600000,ALIYUN_ASR_FILE_URL_EXPIRES_SECONDS=3600
+      - --set-secrets
+      - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - deploy
+      - ${_WORKER_JOB}
+      - --image
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA
+      - --region
+      - ${_REGION}
+      - --memory
+      - 2Gi
+      - --cpu
+      - "2"
+      - --task-timeout
+      - 3600
+      - --command
+      - npm
+      - --args
+      - run,worker:once
       - --set-env-vars
       - NODE_ENV=production,ASR_PROVIDER=aliyun,ALIYUN_ASR_MODEL=qwen3-asr-flash-filetrans,ALIYUN_ASR_BASE_URL=https://dashscope.aliyuncs.com/api/v1,ALIYUN_ASR_POLL_INTERVAL_MS=3000,ALIYUN_ASR_TIMEOUT_MS=600000,ALIYUN_ASR_FILE_URL_EXPIRES_SECONDS=3600
       - --set-secrets
