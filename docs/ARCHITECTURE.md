@@ -2,7 +2,7 @@
 
 第一版只实现基础链路，但目录按可扩展产品组织。代码不能因为 MVP 小就临时堆在一起；未来新增用户系统、队列、AI Agent、报告模板、第三方平台接入时，都应该进入对应层。
 
-本项目的长期架构标杆是 [ARCHITECTURE_BASELINE.md](ARCHITECTURE_BASELINE.md)。当现有实现和标杆冲突时，除 Supabase、Cloudflare R2、Google Cloud Run、阿里云 ASR/LLM 等当前已定平台外，默认以标杆为准，并通过小步重构让 M1 逐步靠近标杆；不再新增临时逻辑文件。
+当前开发优先遵循 [TECHNICAL_MANUAL.md](TECHNICAL_MANUAL.md)。它已经把最新 M1 产品边界、无登录单工作空间约束、课堂模式选择、现有前端、数据库和云平台实现融合在一起。本项目的长期架构标杆仍保留为 [ARCHITECTURE_BASELINE.md](ARCHITECTURE_BASELINE.md)。当现有实现和标杆冲突时，除 Supabase、Cloudflare R2、Google Cloud Run、阿里云 ASR/LLM 等当前已定平台外，默认以当前技术手册为准，并通过小步重构让 M1 逐步靠近长期标杆；不再新增临时逻辑文件。
 
 技术选型遵循一个现实原则：不可维护、不可持续的骨架要换；已经跑通且方便维护的平台先保留。当前项目确定为：
 

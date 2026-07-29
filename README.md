@@ -4,7 +4,7 @@
 
 ## 开发基准
 
-后续任何功能扩展都以 [docs/ARCHITECTURE_BASELINE.md](docs/ARCHITECTURE_BASELINE.md) 为标杆。新增代码必须先判断属于前端、API、Agent Orchestrator、Worker、Pipeline、Integration、Domain、Database 或 Infrastructure 哪一层；不要为了临时跑通把业务判断、AI 调用、云服务 SDK、数据库写入和页面状态混在同一个文件里。
+后续任何功能扩展优先以 [docs/TECHNICAL_MANUAL.md](docs/TECHNICAL_MANUAL.md) 为当前主技术手册；[docs/ARCHITECTURE_BASELINE.md](docs/ARCHITECTURE_BASELINE.md) 保留为长期架构标杆。新增代码必须先判断属于前端、API、Agent Orchestrator、Worker、Pipeline、Integration、Domain、Database 或 Infrastructure 哪一层；不要为了临时跑通把业务判断、AI 调用、云服务 SDK、数据库写入和页面状态混在同一个文件里。
 
 当前技术迁移原则：不可维护、不可持续的骨架要换；已经稳定且方便维护的平台先保留。前端目标骨架为 React + TypeScript，后端目标骨架为 Python FastAPI；Supabase、Cloudflare R2、Google Cloud Run、阿里云 ASR/LLM 暂时不迁移。
 
@@ -37,7 +37,7 @@
 
 | 账号/平台 | 负责的主要功能 | 关键配置 |
 |---|---|---|
-| Supabase | PostgreSQL 数据库、教师登录、保存课堂/逐字稿/证据卡片/复核结果/报告 | `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DATABASE_URL`、`DIRECT_URL` |
+| Supabase | PostgreSQL 数据库，M1 保存单工作空间下的课堂/逐字稿/证据卡片/复核结果/报告；登录与多用户留到 M3 | `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DATABASE_URL`、`DIRECT_URL` |
 | Google Cloud | 部署前端和 API、运行后台视频处理任务、构建和保存 Docker 镜像、保存密钥、查看日志 | Cloud Run、Cloud Run Jobs、Cloud Build、Artifact Registry、Secret Manager、Logging |
 | Cloudflare | 使用 R2 存储课堂原始视频、临时音频和导出文件；提供预签名上传与播放 | `R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_BUCKET`、`R2_ENDPOINT` |
 | 阿里云 | ASR 将课堂音频转为带时间点逐字稿；LLM 将逐字稿生成课堂事件、证据卡片和报告 | DashScope API Key；LLM 的 `BASE_URL`、`API_KEY`、`MODEL` |
