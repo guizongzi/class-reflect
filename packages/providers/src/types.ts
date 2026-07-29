@@ -4,7 +4,14 @@ export interface ObjectStorageProvider {
 }
 
 export interface AsrProvider {
-  transcribe(input: { audioUrl: string }): Promise<Array<{ startMs: number; endMs: number; text: string; speakerLabel?: string }>>;
+  transcribe(input: { audioUrl: string }): Promise<Array<{
+    startMs: number;
+    endMs: number;
+    text: string;
+    speakerId?: string | number | null;
+    speakerLabel?: string;
+    sourceMeta?: Record<string, unknown>;
+  }>>;
 }
 
 export interface LlmProvider {
