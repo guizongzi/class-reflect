@@ -1,42 +1,44 @@
-import "dotenv/config";
+await import("dotenv/config").catch(() => {});
+
+const appConfigEnv = parseAppConfigEnv(process.env.APP_CONFIG_ENV);
 
 export const config = {
-  port: Number(process.env.PORT || 3000),
-  publicBaseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:3000",
-  frontendOrigin: process.env.FRONTEND_ORIGIN || "http://localhost:3000",
-  databaseUrl: process.env.DATABASE_URL || process.env.DIRECT_URL,
-  directUrl: process.env.DIRECT_URL,
+  port: Number(readConfig("PORT", "port") || 3000),
+  publicBaseUrl: readConfig("PUBLIC_BASE_URL", "publicBaseUrl") || "http://localhost:3000",
+  frontendOrigin: readConfig("FRONTEND_ORIGIN", "frontendOrigin") || "http://localhost:3000",
+  databaseUrl: readConfig("DATABASE_URL", "databaseUrl") || readConfig("DIRECT_URL", "directUrl"),
+  directUrl: readConfig("DIRECT_URL", "directUrl"),
   supabase: {
-    url: process.env.SUPABASE_URL,
-    anonKey: process.env.SUPABASE_ANON_KEY,
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
+    url: readConfig("SUPABASE_URL", "supabase.url"),
+    anonKey: readConfig("SUPABASE_ANON_KEY", "supabase.anonKey"),
+    serviceRoleKey: readConfig("SUPABASE_SERVICE_ROLE_KEY", "supabase.serviceRoleKey")
   },
   r2: {
-    accountId: process.env.R2_ACCOUNT_ID,
-    region: process.env.R2_REGION || "auto",
-    endpoint: process.env.R2_ENDPOINT,
-    bucket: process.env.R2_BUCKET,
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    accountId: readConfig("R2_ACCOUNT_ID", "r2.accountId"),
+    region: readConfig("R2_REGION", "r2.region") || "auto",
+    endpoint: readConfig("R2_ENDPOINT", "r2.endpoint"),
+    bucket: readConfig("R2_BUCKET", "r2.bucket"),
+    accessKeyId: readConfig("R2_ACCESS_KEY_ID", "r2.accessKeyId"),
+    secretAccessKey: readConfig("R2_SECRET_ACCESS_KEY", "r2.secretAccessKey"),
     forcePathStyle: true
   },
-  asrProvider: process.env.ASR_PROVIDER || "mock",
+  asrProvider: readConfig("ASR_PROVIDER", "asrProvider") || "mock",
   aliyun: {
-    asrModel: process.env.ALIYUN_ASR_MODEL || "qwen3-asr-flash-filetrans",
-    asrBaseUrl: process.env.ALIYUN_ASR_BASE_URL || "https://dashscope.aliyuncs.com/api/v1",
-    dashscopeApiKey: process.env.ALIYUN_DASHSCOPE_API_KEY || process.env.LLM_API_KEY,
-    asrPollIntervalMs: Number(process.env.ALIYUN_ASR_POLL_INTERVAL_MS || 3000),
-    asrTimeoutMs: Number(process.env.ALIYUN_ASR_TIMEOUT_MS || 10 * 60 * 1000),
-    asrFileUrlExpiresSeconds: Number(process.env.ALIYUN_ASR_FILE_URL_EXPIRES_SECONDS || 3600),
-    accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID,
-    accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET
+    asrModel: readConfig("ALIYUN_ASR_MODEL", "aliyun.asrModel") || "qwen3-asr-flash-filetrans",
+    asrBaseUrl: readConfig("ALIYUN_ASR_BASE_URL", "aliyun.asrBaseUrl") || "https://dashscope.aliyuncs.com/api/v1",
+    dashscopeApiKey: readConfig("ALIYUN_DASHSCOPE_API_KEY", "aliyun.dashscopeApiKey") || readConfig("LLM_API_KEY", "llm.apiKey"),
+    asrPollIntervalMs: Number(readConfig("ALIYUN_ASR_POLL_INTERVAL_MS", "aliyun.asrPollIntervalMs") || 3000),
+    asrTimeoutMs: Number(readConfig("ALIYUN_ASR_TIMEOUT_MS", "aliyun.asrTimeoutMs") || 10 * 60 * 1000),
+    asrFileUrlExpiresSeconds: Number(readConfig("ALIYUN_ASR_FILE_URL_EXPIRES_SECONDS", "aliyun.asrFileUrlExpiresSeconds") || 3600),
+    accessKeyId: readConfig("ALIYUN_ACCESS_KEY_ID", "aliyun.accessKeyId"),
+    accessKeySecret: readConfig("ALIYUN_ACCESS_KEY_SECRET", "aliyun.accessKeySecret")
   },
   llm: {
-    baseUrl: process.env.LLM_BASE_URL,
-    apiKey: process.env.LLM_API_KEY,
-    model: process.env.LLM_MODEL
+    baseUrl: readConfig("LLM_BASE_URL", "llm.baseUrl"),
+    apiKey: readConfig("LLM_API_KEY", "llm.apiKey"),
+    model: readConfig("LLM_MODEL", "llm.model")
   },
-  ffmpegPath: process.env.FFMPEG_PATH || "ffmpeg"
+  ffmpegPath: readConfig("FFMPEG_PATH", "ffmpegPath") || "ffmpeg"
 };
 
 export function assertRuntimeConfig() {
@@ -50,4 +52,28 @@ export function assertRuntimeConfig() {
   if (missing.length) {
     throw new Error(`Missing required configuration: ${missing.join(", ")}`);
   }
+}
+
+function parseAppConfigEnv(raw) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("APP_CONFIG_ENV must be a JSON object");
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(`Invalid APP_CONFIG_ENV JSON: ${error.message}`);
+  }
+}
+
+function readConfig(envKey, pathKey) {
+  return process.env[envKey] ?? appConfigEnv[envKey] ?? readPath(appConfigEnv, pathKey);
+}
+
+function readPath(source, pathKey) {
+  return pathKey.split(".").reduce((value, key) => {
+    if (!value || typeof value !== "object") return undefined;
+    return value[key];
+  }, source);
 }
