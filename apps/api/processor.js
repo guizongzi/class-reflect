@@ -49,7 +49,8 @@ export async function claimNextWorkflowRun({ workerId = `worker-${process.pid}` 
 
 export async function processWorkflowRun(workflowRunId) {
   const runResult = await query(`
-    select r.*, v.teacher_id, v.object_key, v.file_name, v.mime_type
+    select r.*, v.teacher_id, v.object_key, v.file_name, v.mime_type,
+           v.audio_object_key, v.audio_mime_type, v.audio_upload_status
     from workflow_runs r
     join lesson_videos v on v.id = r.video_id
     where r.id = $1
@@ -70,7 +71,8 @@ export async function processVideoTask(taskId) {
   if (run) return processWorkflowRun(run.id);
 
   const taskResult = await query(`
-    select t.*, v.teacher_id, v.object_key, v.file_name, v.mime_type
+    select t.*, v.teacher_id, v.object_key, v.file_name, v.mime_type,
+           v.audio_object_key, v.audio_mime_type, v.audio_upload_status
     from analysis_tasks t
     join lesson_videos v on v.id = t.video_id
     where t.id = $1
@@ -94,19 +96,33 @@ async function processVideoWorkflow(task) {
   try {
     await updateWorkflow(task, "running", 5, "verify_upload");
 
-    await updateWorkflow(task, "running", 10, "download_video");
-    await downloadObjectToFile(task.object_key, videoPath);
+    let audioKey = task.audio_upload_status === "uploaded" ? task.audio_object_key : null;
+    if (audioKey) {
+      await updateWorkflow(task, "running", 38, "upload_audio");
+    } else {
+      await updateWorkflow(task, "running", 10, "download_video");
+      await downloadObjectToFile(task.object_key, videoPath);
 
-    await updateWorkflow(task, "running", 25, "extract_audio");
-    await extractAudio(videoPath, audioPath);
+      await updateWorkflow(task, "running", 25, "extract_audio");
+      await extractAudio(videoPath, audioPath);
 
-    await updateWorkflow(task, "running", 38, "upload_audio");
-    const audioKey = audioObjectKey({
-      teacherId: task.teacher_id,
-      lessonId: task.lesson_id,
-      taskId: task.task_id || task.id
-    });
-    await uploadFile(audioKey, audioPath, "audio/wav");
+      await updateWorkflow(task, "running", 38, "upload_audio");
+      audioKey = audioObjectKey({
+        teacherId: task.teacher_id,
+        lessonId: task.lesson_id,
+        taskId: task.task_id || task.id
+      });
+      await uploadFile(audioKey, audioPath, "audio/wav");
+      await query(`
+        update lesson_videos
+        set audio_bucket = $2,
+            audio_object_key = $3,
+            audio_mime_type = 'audio/wav',
+            audio_upload_status = 'uploaded',
+            updated_at = now()
+        where id = $1
+      `, [task.video_id, config.r2.bucket, audioKey]);
+    }
     const audioUrl = await createReadUrl({
       objectKey: audioKey,
       expiresIn: config.aliyun.asrFileUrlExpiresSeconds
