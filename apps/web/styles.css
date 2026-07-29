@@ -376,7 +376,59 @@ h1, h2, p { margin: 0; }
   background: linear-gradient(180deg, #ffffff, #f6fbf8);
 }
 .process-card strong { color: var(--green); }
-.process-card span { display: block; color: var(--muted); margin-top: 8px; line-height: 1.6; }
+.process-note { display: block; color: var(--muted); margin-top: 8px; line-height: 1.6; }
+.backend-steps {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.backend-steps li {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+.backend-steps b {
+  color: var(--text);
+  font-size: 13px;
+}
+.backend-steps em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 12px;
+}
+.backend-steps small {
+  grid-column: 1 / -1;
+  color: #b42318;
+  overflow-wrap: anywhere;
+}
+.backend-steps .completed {
+  border-color: #b7dfcc;
+  background: #f6fbf8;
+}
+.backend-steps .completed em,
+.backend-steps .running em {
+  color: var(--green);
+  font-weight: 700;
+}
+.backend-steps .failed {
+  border-color: #f3b5af;
+  background: #fff7f6;
+}
+.backend-steps .failed em {
+  color: #b42318;
+  font-weight: 700;
+}
+.inline-action {
+  margin-top: 12px;
+  width: 100%;
+}
 
 .assistant-input {
   display: grid;
