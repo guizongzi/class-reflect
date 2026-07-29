@@ -17,13 +17,26 @@
           </div>
         </div>
         <div class="top-actions">
+          <button class="light-button" type="button" id="showLibrary">视频库</button>
           <button class="light-button" type="button" id="newAnalysis">新建分析</button>
           <div class="teacher-avatar">张</div>
           <span>张老师</span>
         </div>
       </header>
 
-      <main class="main-layout">
+      <main class="library-view" id="libraryView">
+        <section class="library-hero">
+          <div>
+            <p class="section-kicker">课堂视频库</p>
+            <h2>已有课堂视频</h2>
+            <span>查看已上传的视频、处理状态和转写结果；也可以删除不需要的课堂记录。</span>
+          </div>
+          <button class="primary-button" type="button" id="startAnalysis">上传新视频</button>
+        </section>
+        <section class="library-list" id="lessonList" aria-label="已有课堂视频"></section>
+      </main>
+
+      <main class="main-layout" id="workspaceView">
         <section class="evidence-workspace" aria-label="课堂证据工作区">
           <div class="video-header">
             <div>
