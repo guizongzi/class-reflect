@@ -53,7 +53,8 @@ app.post("/api/debug/asr-smoke-test", async (req, res, next) => {
       asr_model: config.aliyun.asrModel,
       asr_base_url: config.aliyun.asrBaseUrl,
       segment_count: segments.length,
-      preview: segments.slice(0, 5)
+      preview: segments.slice(0, 5),
+      full_text: segments.map((segment) => `${msToClock(segment.startMs)}-${msToClock(segment.endMs)} ${segment.speakerLabel || "未知"}：${segment.originalText}`).join("\n")
     });
   } catch (error) {
     next(error);
