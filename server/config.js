@@ -23,7 +23,11 @@ export const config = {
   asrProvider: process.env.ASR_PROVIDER || "mock",
   aliyun: {
     asrModel: process.env.ALIYUN_ASR_MODEL || "qwen3-asr-flash-filetrans",
-    asrAppKey: process.env.ALIYUN_ASR_APP_KEY,
+    asrBaseUrl: process.env.ALIYUN_ASR_BASE_URL || "https://dashscope.aliyuncs.com/api/v1",
+    dashscopeApiKey: process.env.ALIYUN_DASHSCOPE_API_KEY || process.env.LLM_API_KEY,
+    asrPollIntervalMs: Number(process.env.ALIYUN_ASR_POLL_INTERVAL_MS || 3000),
+    asrTimeoutMs: Number(process.env.ALIYUN_ASR_TIMEOUT_MS || 10 * 60 * 1000),
+    asrFileUrlExpiresSeconds: Number(process.env.ALIYUN_ASR_FILE_URL_EXPIRES_SECONDS || 3600),
     accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID,
     accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET
   },
