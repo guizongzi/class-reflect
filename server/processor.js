@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { query, withTransaction } from "./db.js";
 import { config } from "./config.js";
 import { transcribeAudio } from "./asr.js";
-import { downloadObjectToFile } from "./storage.js";
+import { audioObjectKey, downloadObjectToFile, uploadFile } from "./storage.js";
 
 export function enqueueVideoProcessing(taskId) {
   setImmediate(() => {
@@ -17,7 +17,7 @@ export function enqueueVideoProcessing(taskId) {
 
 export async function processVideoTask(taskId) {
   const taskResult = await query(`
-    select t.*, v.object_key, v.file_name, v.mime_type
+    select t.*, v.teacher_id, v.object_key, v.file_name, v.mime_type
     from analysis_tasks t
     join lesson_videos v on v.id = t.video_id
     where t.id = $1
@@ -35,6 +35,13 @@ export async function processVideoTask(taskId) {
 
     await updateTask(taskId, "running", 25, "extract_audio");
     await extractAudio(videoPath, audioPath);
+
+    await updateTask(taskId, "running", 38, "upload_audio");
+    await uploadFile(audioObjectKey({
+      teacherId: task.teacher_id,
+      lessonId: task.lesson_id,
+      taskId: task.id
+    }), audioPath, "audio/wav");
 
     await updateTask(taskId, "running", 50, "asr");
     const transcriptSegments = await transcribeAudio(audioPath);
