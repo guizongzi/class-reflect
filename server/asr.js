@@ -8,8 +8,8 @@ export async function transcribeAudio(audioPath) {
 }
 
 async function transcribeWithAliyun(audioPath) {
-  if (!config.aliyun.asrAppKey || !config.aliyun.accessKeyId || !config.aliyun.accessKeySecret) {
-    throw new Error("ALIYUN_ASR_APP_KEY, ALIYUN_ACCESS_KEY_ID and ALIYUN_ACCESS_KEY_SECRET are required when ASR_PROVIDER=aliyun");
+  if (!config.aliyun.asrModel || !config.aliyun.asrAppKey || !config.aliyun.accessKeyId || !config.aliyun.accessKeySecret) {
+    throw new Error("ALIYUN_ASR_MODEL, ALIYUN_ASR_APP_KEY, ALIYUN_ACCESS_KEY_ID and ALIYUN_ACCESS_KEY_SECRET are required when ASR_PROVIDER=aliyun");
   }
   throw new Error("阿里云 ASR 接入点已预留，第一版本地演示请先使用 ASR_PROVIDER=mock");
 }
