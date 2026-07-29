@@ -64,7 +64,7 @@ const processItems = [
   { key: "extract_audio", label: "音频抽取" },
   { key: "upload_audio", label: "临时音频保存" },
   { key: "asr", label: "语音识别" },
-  { key: "write_transcript", label: "课堂记录与证据生成" },
+  { key: "write_transcript", label: "课堂记录写入" },
   { key: "completed", label: "结果写入数据库" }
 ];
 const storeKey = "classroom-review-mvp-v2";
@@ -231,22 +231,23 @@ function renderVideoMeta() {
 
 function renderConversation() {
   const status = state.findingStatus;
-  const reportText = `已确认 ${state.acceptedCount} 条，将进入报告`;
+  const hasEvidence = Boolean(state.evidenceCards?.length);
+  const reportText = hasEvidence ? `已确认 ${state.acceptedCount} 条，将进入报告` : "基础课堂记录可导出";
   els.conversation.innerHTML = `
     ${message("user", state.task, "10:02")}
     ${message("bot", `
-      好的，我会基于课堂视频的语音转写查找相关片段。第一版只分析逐字稿，不做视频 OCR 或画面框选。
+      好的，第一版我会先完成视频上传、语音转文字、时间轴记录和文本校订。AI 教学分析会在基础记录稳定后再运行。
       <div class="chips">
         ${chip("整节课")}
-        ${chip("仅重点片段")}
-        ${chip("思考时间 ≤ 3 秒", true)}
-        ${chip("只看教师提问")}
+        ${chip("只基于语音", true)}
+        ${chip("保留时间轴")}
+        ${chip("先校订后分析")}
       </div>
     `, "10:02")}
     ${message("bot", processCard(), "10:03", true)}
-    ${message("bot", "我已整理为 3-5 分钟课堂记录，不需要逐句确认；如有问题可直接编辑整段。", "10:04")}
-    ${message("bot", evidenceCard(status), "10:05", true)}
-    ${message("bot", reviewCard(status), "10:05", true)}
+    ${message("bot", "我会把 ASR 小段保存为时间轴，并整理为可编辑的大段课堂记录。每行保留开始和结束时间，长停顿会标出。", "10:04")}
+    ${hasEvidence ? message("bot", evidenceCard(status), "10:05", true) : message("bot", transcriptOnlyCard(), "10:05", true)}
+    ${hasEvidence ? message("bot", reviewCard(status), "10:05", true) : ""}
     ${message("bot", reportCard(reportText), "10:06", true)}
   `;
 
@@ -298,9 +299,9 @@ function processCard() {
 function evidenceCard(status) {
   const segment = selectedSegment();
   const card = evidenceForSegment(segment);
-  const conclusion = card?.conclusion || "提问后学生思考时间不足（≤3秒）";
-  const quote = card?.quote_text || "教师：“每一份是它的几分之几？” 学生约 2.1 秒后回答，低于当前阈值 3 秒。依据来自语音转文字和时间戳。";
-  const cardCount = state.evidenceCards?.length || 4;
+  const conclusion = card?.conclusion || "暂无真实 AI 证据";
+  const quote = card?.quote_text || "当前只完成基础转写链路，尚未运行 AI 教学分析。";
+  const cardCount = state.evidenceCards?.length || 0;
   return `
     <div class="embedded-card evidence-card">
       <div class="finding-title">
@@ -318,6 +319,19 @@ function evidenceCard(status) {
         <button class="finding-button" type="button" data-action="seek">查看依据</button>
         <button class="finding-button" type="button" data-action="condition">修改条件</button>
         <button class="finding-button primary" type="button" data-action="next">下一条证据</button>
+      </div>
+    </div>
+  `;
+}
+
+function transcriptOnlyCard() {
+  return `
+    <div class="embedded-card">
+      <strong>基础记录已就绪</strong>
+      <p style="color: var(--muted); margin: 8px 0 12px;">当前阶段只展示真实上传、ASR 时间轴、课堂分段和教师校订结果，不生成规则伪证据。</p>
+      <div class="finding-actions">
+        <button class="finding-button" type="button" data-action="seek">定位当前片段</button>
+        <button class="finding-button primary" type="button" data-action="download">导出记录报告</button>
       </div>
     </div>
   `;
@@ -419,6 +433,28 @@ function updateCurrentRecord() {
   }
   els.saveStatus.textContent = `已自动保存 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
   persist();
+  saveSectionEdit(segment);
+}
+
+async function saveSectionEdit(segment) {
+  if (!state.backendMode || !segment?.id) return;
+  try {
+    const updated = await requestJson(`/api/sections/${segment.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        edited_summary_text: segment.zh,
+        tags: segment.tags || []
+      })
+    });
+    segment.zh = updated.edited_summary_text || updated.summary_text || segment.zh;
+    els.saveStatus.textContent = `已保存到后端 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+    persist();
+  } catch (error) {
+    state.backendError = `文本保存失败：${error.message}`;
+    els.saveStatus.textContent = "保存失败";
+    persist();
+    renderConversation();
+  }
 }
 
 async function uploadVideoThroughBackend(file) {
@@ -508,29 +544,45 @@ function putFileWithProgress(url, file, headers, onProgress) {
   });
 }
 
-function downloadReport() {
+async function downloadReport() {
+  if (state.backendMode && state.lessonId) {
+    try {
+      const report = await requestJson(`/api/lessons/${state.lessonId}/reports`, { method: "POST" });
+      const response = await fetch(`${apiBase}/api/reports/${report.id}/markdown`);
+      if (!response.ok) throw new Error(`报告下载失败：${response.status}`);
+      const content = await response.text();
+      downloadMarkdown(content, "课堂记录报告.md");
+      return;
+    } catch (error) {
+      state.backendError = error.message;
+      persist();
+      renderAll();
+      return;
+    }
+  }
+
   const segment = selectedSegment();
-  const content = `# 课堂复盘报告
+  const content = `# 课堂记录报告
 
 ## 复盘问题
 ${state.task}
 
-## 已确认发现
-- 结论：提问后学生思考时间不足（≤3秒）
-- 时间点：${segment.start}-${segment.end}
-- 原文依据：教师提出问题后，学生约 2.1 秒后回答。
-- 教师复核状态：${state.findingStatus}
+## 当前课堂记录片段
+时间点：${segment.start}-${segment.end}
 
-## 改进建议
-关键问题后建议保留 3-5 秒安静思考时间，再邀请学生回答。
+${segment.zh}
 
 ## 产品边界
-本报告仅基于语音转文字和时间戳分析，不包含视频 OCR、画面定位或学生注意力判断。`;
+本报告仅包含基础课堂记录，不包含 AI 教学分析结论。`;
+  downloadMarkdown(content, "课堂记录报告.md");
+}
+
+function downloadMarkdown(content, fileName) {
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "课堂复盘报告.md";
+  link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
 }
