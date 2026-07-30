@@ -1,6 +1,16 @@
-import { runTranscriptNormalizer } from "@class-reflect/agents";
-import { assertEvidenceHasSource } from "@class-reflect/guardrails";
+import { runTeachingEvidenceAgent, runTranscriptNormalizer } from "@class-reflect/agents";
+import {
+  getTeachingEvidenceSource,
+  listClassroomEvents,
+  listTranscriptSegments,
+  saveClassroomEvents,
+  saveLessonSections,
+  saveTeachingEvidenceCards
+} from "@class-reflect/database";
+import { buildLessonSections, detectClassroomEvents } from "@class-reflect/domain";
+import { assertEvidenceHasSource, validateTeachingEvidenceCard } from "@class-reflect/guardrails";
 import { calculateSpeechRate } from "@class-reflect/metrics";
+import { capabilityMatrixByLessonFormat } from "@class-reflect/shared-types";
 import type { ProcessorResult, WorkflowProcessor } from "./types";
 
 export const normalizeTranscriptProcessor: WorkflowProcessor = {
@@ -19,8 +29,27 @@ export const normalizeTranscriptProcessor: WorkflowProcessor = {
 
 export const buildSectionsProcessor: WorkflowProcessor = {
   stepKey: "build_sections",
-  async run(): Promise<ProcessorResult> {
-    throw new Error("build_sections processor not implemented: 需要 lesson_sections repository");
+  async run(context): Promise<ProcessorResult> {
+    const transcriptSegments = await listTranscriptSegments({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId
+    });
+    if (!transcriptSegments.length) throw new Error("还没有可用于生成大段课堂记录的逐字稿");
+
+    const sections = buildLessonSections(transcriptSegments);
+    const savedSections = await saveLessonSections({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId,
+      sections
+    });
+
+    return {
+      output: {
+        sectionCount: savedSections.length,
+        firstSectionId: savedSections[0]?.id || null,
+        lastSectionId: savedSections[savedSections.length - 1]?.id || null
+      }
+    };
   }
 };
 
@@ -34,15 +63,77 @@ export const calculateMetricsProcessor: WorkflowProcessor = {
 
 export const detectEventsProcessor: WorkflowProcessor = {
   stepKey: "detect_events",
-  async run(): Promise<ProcessorResult> {
-    throw new Error("detect_events processor not implemented: 需要课堂事件 Agent 和事件 repository");
+  async run(context): Promise<ProcessorResult> {
+    const transcriptSegments = await listTranscriptSegments({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId
+    });
+    if (!transcriptSegments.length) {
+      return { output: { eventCount: 0 }, warnings: ["no_transcript_for_event_detection"] };
+    }
+    const events = detectClassroomEvents(transcriptSegments);
+    const savedEvents = await saveClassroomEvents({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId,
+      events
+    });
+    return {
+      output: {
+        eventCount: savedEvents.length,
+        eventTypes: [...new Set(savedEvents.map((event) => event.type))]
+      }
+    };
   }
 };
 
 export const generateEvidenceProcessor: WorkflowProcessor = {
   stepKey: "generate_evidence",
-  async run(): Promise<ProcessorResult> {
-    throw new Error("generate_evidence processor not implemented: 需要 evidence_cards repository 和 LLM Provider");
+  async run(context): Promise<ProcessorResult> {
+    const source = await getTeachingEvidenceSource({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId
+    });
+    if (!source) throw new Error(`课堂记录不存在：${context.workflow.lessonId}`);
+    if (!source.transcriptSegments.length) {
+      throw new Error("还没有可用于生成教学证据的逐字稿");
+    }
+
+    const result = runTeachingEvidenceAgent({
+      lessonId: source.lesson.id,
+      lesson_format: source.lesson.lessonFormat,
+      capabilityMatrix: capabilityMatrixByLessonFormat[source.lesson.lessonFormat],
+      transcriptSegments: source.transcriptSegments,
+      metrics: source.metrics,
+      classroomEvents: await listClassroomEvents({ lessonId: source.lesson.id, videoId: context.workflow.videoId }),
+      generationConfig: {
+        language: "zh-CN",
+        maxEvidenceCards: 6,
+        minimumConfidence: "low"
+      }
+    });
+
+    const validCards = result.output.evidenceCards.filter((card) =>
+      validateTeachingEvidenceCard({ lesson_format: source.lesson.lessonFormat, card }).valid
+    );
+    const savedCards = await saveTeachingEvidenceCards({
+      lessonId: source.lesson.id,
+      videoId: context.workflow.videoId,
+      cards: validCards,
+      sourceModel: result.promptVersion
+    });
+
+    return {
+      output: {
+        promptVersion: result.promptVersion,
+        instructionalContext: result.output.instructionalContext,
+        generatedEvidenceCount: result.output.evidenceCards.length,
+        validEvidenceCount: validCards.length,
+        savedEvidenceCount: savedCards.length,
+        skippedCategories: result.output.skippedCategories,
+        generationSummary: result.output.generationSummary
+      },
+      warnings: result.warnings
+    };
   }
 };
 

@@ -6,6 +6,7 @@ body {
   margin: 0;
   background: #f7f8f6;
   color: #142033;
+  font-size: 14px;
   font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
@@ -25,8 +26,8 @@ a {
   border-bottom: 1px solid #dfe4dc;
   display: flex;
   justify-content: space-between;
-  min-height: 64px;
-  padding: 0 24px;
+  min-height: 56px;
+  padding: 0 20px;
 }
 
 .topbar div {
@@ -37,7 +38,7 @@ a {
 
 .topbar span {
   color: #6b7280;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .topbar-actions {
@@ -52,12 +53,14 @@ a {
   border: 1px solid #1f8f55;
   border-radius: 6px;
   cursor: pointer;
-  font-weight: 700;
-  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 8px 12px;
 }
 
 .compact-button {
-  padding: 8px 10px;
+  padding: 7px 10px;
   white-space: nowrap;
 }
 
@@ -89,9 +92,9 @@ a {
 }
 
 .library-panel {
-  margin: 32px auto;
+  margin: 24px auto;
   max-width: 1120px;
-  padding: 0 24px;
+  padding: 0 20px;
 }
 
 .section-heading {
@@ -102,11 +105,15 @@ a {
 }
 
 .section-heading h1 {
+  font-size: 24px;
+  letter-spacing: 0;
+  line-height: 1.25;
   margin: 0;
 }
 
 .section-heading p {
   color: #667085;
+  font-size: 13px;
   margin: 8px 0 0;
 }
 
@@ -122,13 +129,14 @@ a {
   border-radius: 8px;
   color: #b42318;
   margin-top: 18px;
-  padding: 12px 14px;
+  font-size: 13px;
+  padding: 10px 12px;
 }
 
 .lesson-list {
   display: grid;
-  gap: 12px;
-  margin-top: 20px;
+  gap: 10px;
+  margin-top: 16px;
 }
 
 .lesson-row {
@@ -138,8 +146,8 @@ a {
   border-radius: 8px;
   display: flex;
   justify-content: space-between;
-  gap: 18px;
-  padding: 18px;
+  gap: 14px;
+  padding: 14px;
 }
 
 .lesson-main {
@@ -157,6 +165,7 @@ a {
 }
 
 .lesson-title-line strong {
+  font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -166,7 +175,7 @@ a {
 .lesson-row em,
 .lesson-row small {
   color: #667085;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .lesson-metrics {
@@ -183,7 +192,7 @@ a {
   font-size: 12px;
   gap: 5px;
   line-height: 1;
-  padding: 7px 9px;
+  padding: 6px 8px;
   white-space: nowrap;
 }
 
@@ -228,7 +237,7 @@ a {
   align-items: flex-end;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .empty-row {
@@ -238,7 +247,7 @@ a {
   color: #667085;
   display: grid;
   gap: 6px;
-  padding: 22px;
+  padding: 18px;
 }
 
 .empty-row strong {
@@ -247,7 +256,7 @@ a {
 
 .workspace-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) 380px;
 }
 
 .workspace-main {
@@ -257,7 +266,7 @@ a {
 .video-panel,
 .format-panel,
 .transcript-panel {
-  margin: 20px;
+  margin: 16px;
 }
 
 .video-placeholder {
@@ -277,8 +286,8 @@ a {
   border: 1px solid #dfe4dc;
   border-radius: 8px;
   display: grid;
-  gap: 14px;
-  padding: 14px;
+  gap: 12px;
+  padding: 12px;
 }
 
 .upload-dropzone.dragging {
@@ -302,7 +311,7 @@ a {
 .upload-toolbar {
   align-items: center;
   display: flex;
-  gap: 14px;
+  gap: 12px;
   justify-content: space-between;
 }
 
@@ -320,7 +329,7 @@ a {
 
 .upload-toolbar span {
   color: #667085;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .upload-toolbar input {
@@ -339,7 +348,7 @@ a {
   border-radius: 8px;
   display: grid;
   gap: 8px;
-  padding: 12px;
+  padding: 10px;
 }
 
 .progress-card div {
@@ -385,22 +394,27 @@ a {
 
 .format-grid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .format-card,
 .assistant-card,
-.transcript-panel textarea {
+.transcript-panel textarea,
+.report-editor {
   background: #ffffff;
   border: 1px solid #dfe4dc;
   border-radius: 8px;
 }
 
 .format-card {
-  min-height: 104px;
-  padding: 16px;
+  min-height: 88px;
+  padding: 12px;
   text-align: left;
+}
+
+.format-card strong {
+  font-size: 14px;
 }
 
 .format-card.selected {
@@ -411,12 +425,15 @@ a {
 .format-card span {
   color: #667085;
   display: block;
+  font-size: 12px;
   margin-top: 8px;
 }
 
 .transcript-panel textarea {
-  min-height: 220px;
-  padding: 16px;
+  font-size: 14px;
+  line-height: 1.65;
+  min-height: 190px;
+  padding: 12px;
   resize: vertical;
   width: 100%;
 }
@@ -429,6 +446,9 @@ a {
 }
 
 .panel-heading-row h2 {
+  font-size: 18px;
+  letter-spacing: 0;
+  line-height: 1.3;
   margin: 0 0 12px;
 }
 
@@ -440,7 +460,7 @@ a {
 
 .transcript-list {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .transcript-item {
@@ -449,9 +469,32 @@ a {
   border: 1px solid #dfe4dc;
   border-radius: 8px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: minmax(0, 1fr) auto;
-  padding: 14px;
+  padding: 12px;
+}
+
+.transcript-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.transcript-actions textarea {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 120px;
+  min-width: 260px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.transcript-actions > div,
+.evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .transcript-body {
@@ -482,7 +525,8 @@ a {
 
 .transcript-body p {
   color: #344054;
-  line-height: 1.75;
+  font-size: 13px;
+  line-height: 1.65;
   margin: 0;
 }
 
@@ -490,7 +534,7 @@ a {
   background: #f0f7f4;
   border-left: 3px solid #1f8f55;
   color: #285744;
-  font-size: 14px;
+  font-size: 13px;
   font-style: normal;
   line-height: 1.7;
   padding: 8px 10px;
@@ -500,7 +544,7 @@ a {
   background: #ffffff;
   border-left: 1px solid #dfe4dc;
   min-height: 100vh;
-  padding: 20px;
+  padding: 16px;
 }
 
 .progress-line {
@@ -524,9 +568,9 @@ a {
 
 .assistant-card {
   display: grid;
-  gap: 12px;
-  margin-top: 18px;
-  padding: 18px;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
 }
 
 .assistant-card.muted {
@@ -609,6 +653,61 @@ a {
   color: #b42318;
 }
 
+.evidence-list {
+  display: grid;
+  gap: 10px;
+}
+
+.evidence-card {
+  background: #ffffff;
+  border: 1px solid #dfe4dc;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.evidence-card div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.evidence-card strong {
+  color: #142033;
+}
+
+.evidence-card span,
+.evidence-card small {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.evidence-card p,
+.evidence-card em {
+  color: #344054;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.evidence-card em {
+  background: #f0f7f4;
+  border-left: 3px solid #1f8f55;
+  font-style: normal;
+  padding: 8px;
+}
+
+.report-editor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  min-height: 280px;
+  padding: 12px;
+  resize: vertical;
+  width: 100%;
+}
+
 .error-banner.compact {
   margin-top: 0;
 }
@@ -663,6 +762,11 @@ a {
 
   .transcript-item {
     grid-template-columns: 1fr;
+  }
+
+  .transcript-actions textarea {
+    min-width: 0;
+    width: 100%;
   }
 
   .upload-toolbar {

@@ -1,4 +1,4 @@
-import { getLessonVideoRecord } from "@class-reflect/database";
+import { getLessonVideoRecord, saveTranscriptSegments } from "@class-reflect/database";
 import { createConfiguredAsrProvider, createR2ReadUrl } from "@class-reflect/providers";
 import type { ProcessorContext, ProcessorResult, WorkflowProcessor } from "./types";
 
@@ -14,6 +14,7 @@ export const submitAsrProcessor: WorkflowProcessor = {
     return {
       output: {
         segmentCount: segments.length,
+        segments,
         transcriptPreview: segments.slice(0, 3)
       }
     };
@@ -29,7 +30,36 @@ export const pollAsrProcessor: WorkflowProcessor = {
 
 export const persistTranscriptProcessor: WorkflowProcessor = {
   stepKey: "persist_transcript",
-  async run(): Promise<ProcessorResult> {
-    throw new Error("persist_transcript processor not implemented: 需要 transcript_segments repository");
+  async run(context): Promise<ProcessorResult> {
+    const submitAsrOutput = readStepOutput(context.workflow.output, "submit_asr");
+    const segments = Array.isArray(submitAsrOutput.segments) ? submitAsrOutput.segments : [];
+    if (!segments.length) throw new Error("ASR 没有返回可保存的逐字稿小段");
+
+    const saved = await saveTranscriptSegments({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId,
+      segments: segments.map((segment) => ({
+        startMs: Number((segment as Record<string, unknown>).startMs || 0),
+        endMs: Number((segment as Record<string, unknown>).endMs || (segment as Record<string, unknown>).startMs || 0),
+        text: String((segment as Record<string, unknown>).text || ""),
+        speakerId: ((segment as Record<string, unknown>).speakerId ?? null) as string | number | null,
+        speakerLabel: ((segment as Record<string, unknown>).speakerLabel ?? null) as string | null,
+        confidence: (segment as Record<string, unknown>).confidence == null ? null : Number((segment as Record<string, unknown>).confidence),
+        sourceMeta: ((segment as Record<string, unknown>).sourceMeta || {}) as Record<string, unknown>
+      })).filter((segment) => segment.text.trim())
+    });
+
+    return {
+      output: {
+        persistedSegmentCount: saved.length,
+        firstSegmentId: saved[0]?.id || null,
+        lastSegmentId: saved[saved.length - 1]?.id || null
+      }
+    };
   }
 };
+
+function readStepOutput(output: Record<string, unknown>, stepKey: string): Record<string, unknown> {
+  const value = output[stepKey];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}

@@ -38,6 +38,9 @@ importers:
       '@class-reflect/providers':
         specifier: workspace:*
         version: link:../../packages/providers
+      '@class-reflect/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       '@nestjs/common':
         specifier: ^10.4.15
         version: 10.4.22(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -109,6 +112,9 @@ importers:
       '@class-reflect/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@class-reflect/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@class-reflect/guardrails':
         specifier: workspace:*
         version: link:../../packages/guardrails
@@ -136,6 +142,10 @@ importers:
         version: 5.9.3
 
   packages/agents:
+    dependencies:
+      '@class-reflect/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
     devDependencies:
       typescript:
         specifier: ^5.7.3
@@ -199,6 +209,10 @@ importers:
   packages/eslint-config: {}
 
   packages/guardrails:
+    dependencies:
+      '@class-reflect/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
     devDependencies:
       typescript:
         specifier: ^5.7.3

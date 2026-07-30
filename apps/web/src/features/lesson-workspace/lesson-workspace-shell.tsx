@@ -49,6 +49,8 @@ type LessonTextItem = {
 type LessonDetailResponse = {
   sections?: Array<Record<string, unknown>>;
   transcriptSegments?: Array<Record<string, unknown>>;
+  evidenceCards?: EvidenceCardItem[];
+  reports?: ReportItem[];
 };
 
 type TranslateResponse = {
@@ -57,6 +59,27 @@ type TranslateResponse = {
     targetType: "section" | "segment";
     translatedText: string | null;
   } | null;
+};
+
+type EvidenceCardItem = {
+  id: string;
+  category?: string;
+  title?: string;
+  fact?: string;
+  interpretation?: string;
+  suggestion?: string;
+  startMs?: number;
+  endMs?: number;
+  quote?: string;
+  confidence?: string;
+  reviewStatus?: string;
+  uncertaintyNote?: string | null;
+};
+
+type ReportItem = {
+  id: string;
+  markdownContent: string;
+  createdAt?: string;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -76,8 +99,15 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatusResponse | null>(null);
   const [isWorkflowRefreshing, setIsWorkflowRefreshing] = useState(false);
   const [lessonTexts, setLessonTexts] = useState<LessonTextItem[]>([]);
+  const [editingTextById, setEditingTextById] = useState<Record<string, string>>({});
+  const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
   const [translatingId, setTranslatingId] = useState<string | null>(null);
   const [translationError, setTranslationError] = useState<string | null>(null);
+  const [evidenceCards, setEvidenceCards] = useState<EvidenceCardItem[]>([]);
+  const [reviewingEvidenceId, setReviewingEvidenceId] = useState<string | null>(null);
+  const [reports, setReports] = useState<ReportItem[]>([]);
+  const [reportDraft, setReportDraft] = useState("");
+  const [savingReport, setSavingReport] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -96,7 +126,15 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
     async function loadLessonDetail() {
       try {
         const detail = await getJson<LessonDetailResponse>(`/api/lessons/${activeLessonId}`);
-        if (!cancelled) setLessonTexts(buildLessonTextItems(detail));
+        if (!cancelled) {
+          const textItems = buildLessonTextItems(detail);
+          setLessonTexts(textItems);
+          setEditingTextById(Object.fromEntries(textItems.map((item) => [item.id, item.originalText])));
+          setEvidenceCards(normalizeEvidenceCards(detail.evidenceCards));
+          const loadedReports = normalizeReports(detail.reports);
+          setReports(loadedReports);
+          setReportDraft(loadedReports[0]?.markdownContent || "");
+        }
       } catch {
         if (!cancelled) setLessonTexts([]);
       }
@@ -141,6 +179,74 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
       setTranslationError(error instanceof Error ? error.message : "翻译失败");
     } finally {
       setTranslatingId(null);
+    }
+  }
+
+  async function saveSection(item: LessonTextItem) {
+    if (!activeLessonId || item.targetType !== "section") return;
+    const editedSummaryText = editingTextById[item.id] || item.originalText;
+    setSavingSectionId(item.id);
+    setTranslationError(null);
+    try {
+      const result = await patchJson<{ section?: { summaryText?: string } }>(`/api/lessons/${activeLessonId}/transcripts/sections/${item.id}`, {
+        editedSummaryText
+      });
+      const savedText = result.section?.summaryText || editedSummaryText;
+      setLessonTexts((items) => items.map((current) => current.id === item.id ? { ...current, originalText: savedText } : current));
+      setEditingTextById((drafts) => ({ ...drafts, [item.id]: savedText }));
+    } catch (error) {
+      setTranslationError(error instanceof Error ? error.message : "保存校订失败");
+    } finally {
+      setSavingSectionId(null);
+    }
+  }
+
+  async function reviewEvidence(card: EvidenceCardItem, status: "accepted" | "edited_and_accepted" | "rejected" | "needs_more_context") {
+    if (!activeLessonId) return;
+    setReviewingEvidenceId(card.id);
+    try {
+      await patchJson(`/api/lessons/${activeLessonId}/evidence/${card.id}/review`, {
+        status,
+        finalFact: card.fact,
+        finalJudgment: card.interpretation,
+        finalSuggestion: card.suggestion
+      });
+      const result = await getJson<{ evidenceCards: EvidenceCardItem[] }>(`/api/lessons/${activeLessonId}/evidence`);
+      setEvidenceCards(result.evidenceCards || []);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "证据复核失败");
+    } finally {
+      setReviewingEvidenceId(null);
+    }
+  }
+
+  async function generateReport() {
+    if (!activeLessonId) return;
+    setSavingReport(true);
+    try {
+      const result = await postJson<{ report: ReportItem }>(`/api/lessons/${activeLessonId}/reports`, {});
+      setReports((items) => [result.report, ...items.filter((item) => item.id !== result.report.id)]);
+      setReportDraft(result.report.markdownContent || "");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "报告生成失败");
+    } finally {
+      setSavingReport(false);
+    }
+  }
+
+  async function saveReport() {
+    if (!activeLessonId || !reports[0]) return;
+    setSavingReport(true);
+    try {
+      const result = await patchJson<{ report: ReportItem }>(`/api/lessons/${activeLessonId}/reports/${reports[0].id}`, {
+        markdownContent: reportDraft
+      });
+      setReports((items) => items.map((item) => item.id === result.report.id ? result.report : item));
+      setReportDraft(result.report.markdownContent || "");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "报告保存失败");
+    } finally {
+      setSavingReport(false);
     }
   }
 
@@ -308,14 +414,35 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
                   <p>{item.originalText}</p>
                   {item.translatedText ? <em>{item.translatedText}</em> : null}
                 </button>
-                <button
-                  className="ghost-button compact-button"
-                  disabled={translatingId === item.id}
-                  onClick={() => void translateTextItem(item, Boolean(item.translatedText))}
-                  type="button"
-                >
-                  {translatingId === item.id ? "翻译中" : item.translatedText ? "重新翻译" : "英译中"}
-                </button>
+                <div className="transcript-actions">
+                  {item.targetType === "section" ? (
+                    <textarea
+                      aria-label="校订课堂记录"
+                      value={editingTextById[item.id] ?? item.originalText}
+                      onChange={(event) => setEditingTextById((drafts) => ({ ...drafts, [item.id]: event.target.value }))}
+                    />
+                  ) : null}
+                  <div>
+                    {item.targetType === "section" ? (
+                      <button
+                        className="ghost-button compact-button"
+                        disabled={savingSectionId === item.id}
+                        onClick={() => void saveSection(item)}
+                        type="button"
+                      >
+                        {savingSectionId === item.id ? "保存中" : "保存校订"}
+                      </button>
+                    ) : null}
+                    <button
+                      className="ghost-button compact-button"
+                      disabled={translatingId === item.id}
+                      onClick={() => void translateTextItem(item, Boolean(item.translatedText))}
+                      type="button"
+                    >
+                      {translatingId === item.id ? "翻译中" : item.translatedText ? "重新翻译" : "英译中"}
+                    </button>
+                  </div>
+                </div>
               </article>
             )) : (
               <div className="empty-row">
@@ -346,6 +473,52 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
             <span>{isWorkflowRefreshing ? "刷新中" : formatWorkflowSummary(workflowStatus)}</span>
           </div>
           <WorkflowStepList steps={workflowStatus?.steps || []} />
+        </section>
+        <section className="assistant-card muted">
+          <div className="assistant-card-title">
+            <strong>证据审核</strong>
+            <span>{evidenceCards.length ? `${evidenceCards.length} 张` : "等待生成"}</span>
+          </div>
+          <div className="evidence-list">
+            {evidenceCards.length ? evidenceCards.map((card) => (
+              <article className="evidence-card" key={card.id}>
+                <div>
+                  <strong>{card.title || card.category || "教学证据"}</strong>
+                  <span>{formatTimeRange(card.startMs || 0, card.endMs || 0)} · {formatReviewStatus(card.reviewStatus)}</span>
+                </div>
+                <p>{card.fact || card.quote}</p>
+                {card.interpretation ? <small>{card.interpretation}</small> : null}
+                {card.suggestion ? <em>{card.suggestion}</em> : null}
+                <div className="evidence-actions">
+                  <button className="ghost-button compact-button" disabled={reviewingEvidenceId === card.id} onClick={() => void reviewEvidence(card, "accepted")} type="button">接受</button>
+                  <button className="ghost-button compact-button" disabled={reviewingEvidenceId === card.id} onClick={() => void reviewEvidence(card, "needs_more_context")} type="button">需更多上下文</button>
+                  <button className="danger-button compact-button" disabled={reviewingEvidenceId === card.id} onClick={() => void reviewEvidence(card, "rejected")} type="button">驳回</button>
+                </div>
+              </article>
+            )) : <span>Worker 生成候选证据后会显示在这里。</span>}
+          </div>
+        </section>
+        <section className="assistant-card muted">
+          <div className="assistant-card-title">
+            <strong>报告</strong>
+            <span>{reports.length ? "已有报告" : "未生成"}</span>
+          </div>
+          <button className="primary-button" disabled={savingReport} onClick={() => void generateReport()} type="button">
+            {savingReport ? "处理中" : "生成报告"}
+          </button>
+          {reportDraft ? (
+            <>
+              <textarea
+                className="report-editor"
+                aria-label="报告 Markdown"
+                value={reportDraft}
+                onChange={(event) => setReportDraft(event.target.value)}
+              />
+              <button className="ghost-button" disabled={savingReport || !reports[0]} onClick={() => void saveReport()} type="button">
+                保存报告
+              </button>
+            </>
+          ) : null}
         </section>
       </aside>
     </main>
@@ -390,6 +563,42 @@ function buildLessonTextItems(detail: LessonDetailResponse): LessonTextItem[] {
   })).filter((item) => item.id && item.originalText);
 }
 
+function normalizeEvidenceCards(value: unknown): EvidenceCardItem[] {
+  const rows = Array.isArray(value) ? value : [];
+  return rows.map((row) => {
+    const item = row as Record<string, unknown>;
+    const raw = item.raw_json && typeof item.raw_json === "object" ? item.raw_json as Record<string, unknown> : {};
+    const conclusion = stringValue(item.edited_conclusion ?? item.conclusion);
+    const [fact = conclusion, interpretation = ""] = conclusion.split("\n");
+    return {
+      id: stringValue(item.id ?? raw.id),
+      category: stringValue(raw.category ?? item.evidence_type),
+      title: stringValue(raw.title ?? item.evidence_type),
+      fact: stringValue(raw.fact ?? fact),
+      interpretation: stringValue(raw.interpretation ?? interpretation),
+      suggestion: stringValue(item.suggestion ?? raw.suggestion),
+      startMs: numberValue(item.start_ms ?? raw.startMs),
+      endMs: numberValue(item.end_ms ?? raw.endMs),
+      quote: stringValue(item.quote_text ?? raw.quote),
+      confidence: stringValue(item.confidence_label ?? raw.confidence),
+      reviewStatus: stringValue(item.review_status ?? raw.reviewStatus),
+      uncertaintyNote: nullableString(raw.uncertaintyNote)
+    };
+  }).filter((item) => item.id);
+}
+
+function normalizeReports(value: unknown): ReportItem[] {
+  const rows = Array.isArray(value) ? value : [];
+  return rows.map((row) => {
+    const item = row as Record<string, unknown>;
+    return {
+      id: stringValue(item.id),
+      markdownContent: stringValue(item.markdown_content ?? item.markdownContent),
+      createdAt: nullableString(item.created_at ?? item.createdAt) || undefined
+    };
+  }).filter((item) => item.id);
+}
+
 async function createLessonFromFile(file: File, lessonFormat: LessonFormat) {
   const lesson = await postJson<{ lesson: { id: string }; id?: string } | { id: string }>("/api/lessons", {
     lessonTitle: file.name.replace(/\.[^.]+$/, "") || "未命名课堂",
@@ -404,6 +613,19 @@ async function createLessonFromFile(file: File, lessonFormat: LessonFormat) {
 async function postJson<T = unknown>(path: string, body: unknown): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.message || payload?.error || "请求失败");
+  }
+  return payload as T;
+}
+
+async function patchJson<T = unknown>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
@@ -559,6 +781,16 @@ function formatWorkflowStepStatus(status: string, progress?: number | null) {
     skipped: "跳过",
     cancelled: "已取消"
   }[status] || status;
+}
+
+function formatReviewStatus(status?: string | null) {
+  return {
+    pending_review: "待复核",
+    accepted: "已接受",
+    edited_and_accepted: "修改后接受",
+    rejected: "已驳回",
+    needs_more_context: "需更多上下文"
+  }[status || ""] || "待复核";
 }
 
 function formatTimeRange(startMs: number, endMs: number) {

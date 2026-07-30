@@ -14,6 +14,7 @@
     "@class-reflect/agents": "workspace:*",
     "@class-reflect/config": "workspace:*",
     "@class-reflect/database": "workspace:*",
+    "@class-reflect/domain": "workspace:*",
     "@class-reflect/guardrails": "workspace:*",
     "@class-reflect/metrics": "workspace:*",
     "@class-reflect/observability": "workspace:*",
