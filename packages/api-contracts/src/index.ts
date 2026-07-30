@@ -30,3 +30,16 @@ export const ReviewEvidenceRequestSchema = z.object({
 });
 
 export type ReviewEvidenceRequest = z.infer<typeof ReviewEvidenceRequestSchema>;
+
+export const UpdateLessonSectionRequestSchema = z.object({
+  editedSummaryText: z.string().min(1),
+  reviewerId: z.string().optional()
+});
+
+export type UpdateLessonSectionRequest = z.infer<typeof UpdateLessonSectionRequestSchema>;
+
+export const UpdateReportRequestSchema = z.object({
+  markdownContent: z.string().min(1)
+});
+
+export type UpdateReportRequest = z.infer<typeof UpdateReportRequestSchema>;

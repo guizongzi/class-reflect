@@ -1,5 +1,5 @@
 import type { CreateLessonRequest } from "@class-reflect/api-contracts";
-import type { LessonFormat, LessonSection, TranscriptSegment, WorkflowStatus } from "@class-reflect/shared-types";
+import type { ClassroomEvent, LessonFormat, LessonSection, Report, TeachingEvidenceCard, TranscriptSegment, WorkflowStatus } from "@class-reflect/shared-types";
 
 export type Lesson = {
   id: string;
@@ -53,6 +53,117 @@ export function buildLessonSections(transcriptSegments: TranscriptSegment[]): Le
   return sections;
 }
 
+export function detectClassroomEvents(transcriptSegments: TranscriptSegment[]): ClassroomEvent[] {
+  const events: ClassroomEvent[] = [];
+  const sorted = [...transcriptSegments].sort((a, b) => a.startMs - b.startMs);
+
+  for (let index = 0; index < sorted.length; index += 1) {
+    const segment = sorted[index];
+    if (!segment) continue;
+    const next = sorted[index + 1];
+    const text = segment.text || "";
+    const isTeacher = isTeacherSegment(segment);
+
+    if (isTeacher && hasInstructionalQuestion(text)) {
+      events.push(makeEvent("teacher_question", segment, [segment.id], text, "medium"));
+      if (next && isTeacherSegment(next) && next.startMs - segment.endMs <= 3000) {
+        events.push(makeEvent("teacher_self_answer", { ...segment, endMs: next.endMs, text: `${text} ${next.text}` }, [segment.id, next.id], `${text} ${next.text}`, "medium", {
+          waitMs: Math.max(next.startMs - segment.endMs, 0)
+        }));
+      }
+      if (next && !isTeacherSegment(next)) {
+        const responseType = inferStudentResponseType(next);
+        events.push(makeEvent(responseType, next, [next.id], next.text, "medium", {
+          questionSegmentId: segment.id,
+          waitMs: Math.max(next.startMs - segment.endMs, 0)
+        }));
+      }
+    }
+
+    if (isTeacher && /听懂了吗|会了吗|明白了吗|没问题吧|清楚了吗|对不对|是不是/.test(text)) {
+      events.push(makeEvent("generic_comprehension_check", segment, [segment.id], text, "high"));
+    }
+
+    if (isTeacher && /为什么|依据|理由|怎么判断|请.*说明|请.*解释/.test(text)) {
+      events.push(makeEvent("specific_comprehension_check", segment, [segment.id], text, "medium"));
+    }
+
+    if (isTeacher && /很好|不错|对了|答得好|再想想|不完全|哪里不对|补充一下/.test(text)) {
+      events.push(makeEvent("teacher_feedback", segment, [segment.id], text, "medium"));
+    }
+  }
+
+  return dedupeEvents(events);
+}
+
+export function buildReportFromAcceptedEvidence(input: {
+  lesson: Lesson;
+  evidenceCards: TeachingEvidenceCard[];
+}): Report {
+  const accepted = input.evidenceCards.filter((card) => ["accepted", "edited_and_accepted"].includes(card.reviewStatus));
+  const findings = accepted.length
+    ? accepted.map((card, index) => [
+      `### ${index + 1}. ${card.title}`,
+      "",
+      `- 时间：${msToClock(card.startMs)}-${msToClock(card.endMs)}`,
+      `- 事实：${card.fact}`,
+      `- 判断：${card.interpretation}`,
+      `- 建议：${card.suggestion}`,
+      `- 引用：${card.quote}`
+    ].join("\n")).join("\n\n")
+    : "本报告尚无已确认的教学证据。请先在证据审核中接受或修改后接受候选证据。";
+
+  const suggestions = accepted.length
+    ? accepted.map((card) => `- ${card.suggestion}`).join("\n")
+    : "- 暂无已确认建议。";
+
+  return {
+    lessonId: input.lesson.id,
+    markdownContent: [
+      "# 课堂复盘报告",
+      "",
+      "## 1. 课堂基本信息",
+      "",
+      `- 课程：${input.lesson.courseTitle}`,
+      `- 课堂：${input.lesson.lessonTitle}`,
+      `- 课程形式：${input.lesson.lessonFormat}`,
+      "",
+      "## 2. 本次复盘目标",
+      "",
+      "围绕课堂结构、教学互动、学习检查和可追溯证据进行复盘。",
+      "",
+      "## 3. 素材与分析范围",
+      "",
+      "本报告只整理教师已确认的候选证据，不重新分析原始逐字稿。",
+      "",
+      "## 4. 课堂结构与关键指标",
+      "",
+      "当前版本保留基础指标位置，后续可接入更多确定性指标。",
+      "",
+      "## 5. 教师确认的主要发现",
+      "",
+      findings,
+      "",
+      "## 6. 证据详情",
+      "",
+      findings,
+      "",
+      "## 7. 下一次课堂可尝试的改进",
+      "",
+      suggestions,
+      "",
+      "## 8. 分析限制与不确定性",
+      "",
+      "报告不评价教师人格、能力或学生真实掌握程度；没有音视频和逐字稿证据支持的内容不进入报告。"
+    ].join("\n"),
+    generatedFrom: {
+      acceptedEvidenceCardIds: accepted.map((card) => card.id),
+      evidenceCount: accepted.length,
+      policy: "accepted_or_edited_and_accepted_only"
+    }
+  };
+}
+
 function makeSection(segments: TranscriptSegment[], index: number): LessonSection {
   const startMs = segments[0]?.startMs ?? 0;
   const endMs = segments[segments.length - 1]?.endMs ?? startMs;
@@ -65,6 +176,53 @@ function makeSection(segments: TranscriptSegment[], index: number): LessonSectio
     confidenceLabel: "需要复核",
     tags: inferSectionTags(text)
   };
+}
+
+function makeEvent(
+  type: string,
+  segment: TranscriptSegment,
+  transcriptSegmentIds: string[],
+  quote: string,
+  confidenceLabel: string,
+  metadata: Record<string, unknown> = {}
+): ClassroomEvent {
+  return {
+    id: `event_${stableHash(`${type}:${transcriptSegmentIds.join(",")}:${segment.startMs}:${segment.endMs}`)}`,
+    type,
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+    transcriptSegmentIds,
+    quote: quote.replace(/\s+/g, " ").trim().slice(0, 160),
+    confidenceLabel,
+    metadata
+  };
+}
+
+function hasInstructionalQuestion(text: string) {
+  if (/坐好了吗|准备好了吗|能听见吗|看得见吗|书翻到|安静|举手/.test(text)) return false;
+  return /[？?]|为什么|怎么|哪|什么|是否|是不是|对不对|请.*说|请.*解释/.test(text);
+}
+
+function isTeacherSegment(segment: TranscriptSegment) {
+  const label = segment.speakerLabel || "";
+  if (/学生|同学|全班|生/.test(label)) return false;
+  return /教师|老师|teacher|说话人 A|未知/i.test(label) || !label;
+}
+
+function inferStudentResponseType(segment: TranscriptSegment) {
+  const value = `${segment.speakerLabel || ""} ${segment.text || ""}`;
+  if (/全班|集体|齐答|^(懂了|会了|明白了?|对|是)[。！!]?$/.test(value.trim())) return "choral_response";
+  return "student_response";
+}
+
+function dedupeEvents(events: ClassroomEvent[]) {
+  const seen = new Set<string>();
+  return events.filter((event) => {
+    const key = `${event.type}:${event.transcriptSegmentIds?.join(",")}:${event.startMs}:${event.endMs}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function inferSectionTitle(text: string, index: number) {
@@ -132,4 +290,13 @@ function msToClock(ms: number) {
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
 }

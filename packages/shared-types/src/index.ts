@@ -183,6 +183,17 @@ export type ClassroomEvent = {
   startMs: number;
   endMs: number;
   transcriptSegmentIds?: string[];
+  quote?: string;
+  confidenceLabel?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type Report = {
+  id?: string;
+  lessonId: string;
+  markdownContent: string;
+  generatedFrom: Record<string, unknown>;
+  createdAt?: string;
 };
 
 export type TeachingEvidenceCard = {

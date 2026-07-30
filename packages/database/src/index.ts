@@ -2,8 +2,11 @@ import { loadAppConfig } from "@class-reflect/config";
 import {
   workflowStepOptions,
   type ClassroomMetric,
+  type ClassroomEvent,
   type LessonSection,
   type LessonFormat,
+  type Report,
+  type ReviewStatus,
   type TeachingEvidenceCard,
   type TranscriptSegment,
   type WorkflowStatus,
@@ -385,6 +388,7 @@ export async function saveTranscriptSegments(input: {
   try {
     await client.query("begin");
     await client.query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+    await client.query("delete from classroom_events where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from transcript_segments where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
 
@@ -514,6 +518,160 @@ export async function saveLessonSections(input: {
   } finally {
     client.release();
   }
+}
+
+export async function updateLessonSectionText(input: {
+  lessonId: string;
+  sectionId: string;
+  editedSummaryText: string;
+  reviewerId?: string;
+}): Promise<LessonSection | null> {
+  const result = await getPool().query(`
+    update lesson_sections
+    set
+      edited_summary_text = $3,
+      review_status = '已校订',
+      reviewer_id = $4,
+      reviewed_at = now(),
+      updated_at = now()
+    where lesson_id = $1 and id = $2
+    returning id, lesson_id, video_id, start_ms, end_ms, title, summary_text, edited_summary_text, confidence_label, tags
+  `, [input.lessonId, input.sectionId, input.editedSummaryText, input.reviewerId || "demo-teacher"]);
+  const row = result.rows[0];
+  if (!row) return null;
+  return mapLessonSectionRow(row);
+}
+
+export async function saveClassroomEvents(input: {
+  lessonId: string;
+  videoId: string;
+  events: ClassroomEvent[];
+}): Promise<ClassroomEvent[]> {
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    await client.query("delete from classroom_events where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+    const saved: ClassroomEvent[] = [];
+    for (const event of input.events) {
+      const result = await client.query(`
+        insert into classroom_events
+          (lesson_id, video_id, event_type, start_ms, end_ms, transcript_segment_ids, quote_text, confidence_label, metadata)
+        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb)
+        returning *
+      `, [
+        input.lessonId,
+        input.videoId,
+        event.type,
+        event.startMs,
+        event.endMs,
+        JSON.stringify(event.transcriptSegmentIds || []),
+        event.quote || null,
+        event.confidenceLabel || null,
+        JSON.stringify(event.metadata || {})
+      ]);
+      saved.push(mapClassroomEventRow(result.rows[0]));
+    }
+    await client.query("commit");
+    return saved;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listClassroomEvents(input: {
+  lessonId: string;
+  videoId?: string;
+}): Promise<ClassroomEvent[]> {
+  const params = input.videoId ? [input.lessonId, input.videoId] : [input.lessonId];
+  const result = await getPool().query(`
+    select *
+    from classroom_events
+    where lesson_id = $1
+      ${input.videoId ? "and video_id = $2" : ""}
+    order by start_ms, created_at
+  `, params);
+  return result.rows.map(mapClassroomEventRow);
+}
+
+export async function reviewEvidenceCardRecord(input: {
+  lessonId: string;
+  evidenceCardId: string;
+  status: ReviewStatus;
+  finalFact?: string;
+  finalJudgment?: string;
+  finalSuggestion?: string;
+  reviewComment?: string;
+}) {
+  const result = await getPool().query(`
+    update evidence_cards
+    set
+      review_status = $3,
+      edited_conclusion = $4,
+      suggestion = coalesce($5, suggestion),
+      teacher_note = $6,
+      updated_at = now()
+    where lesson_id = $1 and id = $2
+    returning *
+  `, [
+    input.lessonId,
+    input.evidenceCardId,
+    input.status,
+    [input.finalFact, input.finalJudgment].filter(Boolean).join("\n") || null,
+    input.finalSuggestion || null,
+    input.reviewComment || null
+  ]);
+  return result.rows[0] || null;
+}
+
+export async function listTeachingEvidenceCards(lessonId: string): Promise<TeachingEvidenceCard[]> {
+  const result = await getPool().query("select * from evidence_cards where lesson_id = $1 order by start_ms, created_at", [lessonId]);
+  return result.rows.map(mapEvidenceCardRow);
+}
+
+export async function saveReportRecord(input: {
+  lessonId: string;
+  markdownContent: string;
+  generatedFrom: Record<string, unknown>;
+  title?: string;
+}): Promise<Report> {
+  const result = await getPool().query(`
+    insert into reports (lesson_id, title, markdown_content, generated_from)
+    values ($1, $2, $3, $4::jsonb)
+    returning id, lesson_id, markdown_content, generated_from, created_at
+  `, [
+    input.lessonId,
+    input.title || "课堂复盘报告",
+    input.markdownContent,
+    JSON.stringify(input.generatedFrom)
+  ]);
+  return mapReportRow(result.rows[0]);
+}
+
+export async function updateReportRecord(input: {
+  lessonId: string;
+  reportId: string;
+  markdownContent: string;
+}): Promise<Report | null> {
+  const result = await getPool().query(`
+    update reports
+    set markdown_content = $3, updated_at = now()
+    where lesson_id = $1 and id = $2
+    returning id, lesson_id, markdown_content, generated_from, created_at
+  `, [input.lessonId, input.reportId, input.markdownContent]);
+  return result.rows[0] ? mapReportRow(result.rows[0]) : null;
+}
+
+export async function listReportRecords(lessonId: string): Promise<Report[]> {
+  const result = await getPool().query(`
+    select id, lesson_id, markdown_content, generated_from, created_at
+    from reports
+    where lesson_id = $1
+    order by created_at desc
+  `, [lessonId]);
+  return result.rows.map(mapReportRow);
 }
 
 export async function saveTeachingEvidenceCards(input: {
@@ -1059,6 +1217,70 @@ function mapWorkflowStepRow(row: Record<string, unknown>): WorkflowStepRunRecord
     finishedAt: row.finished_at == null ? null : toIsoString(row.finished_at),
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at)
+  };
+}
+
+function mapLessonSectionRow(row: Record<string, unknown>): LessonSection {
+  return {
+    id: String(row.id),
+    lessonId: String(row.lesson_id),
+    videoId: String(row.video_id),
+    startMs: Number(row.start_ms || 0),
+    endMs: Number(row.end_ms || 0),
+    title: String(row.title || ""),
+    summaryText: String(row.edited_summary_text || row.summary_text || ""),
+    confidenceLabel: String(row.confidence_label || ""),
+    tags: Array.isArray(row.tags) ? row.tags.map(String) : []
+  };
+}
+
+function mapClassroomEventRow(row: Record<string, unknown>): ClassroomEvent {
+  const transcriptIds = Array.isArray(row.transcript_segment_ids) ? row.transcript_segment_ids : [];
+  return {
+    id: String(row.id),
+    type: String(row.event_type || row.type || ""),
+    startMs: Number(row.start_ms || 0),
+    endMs: Number(row.end_ms || 0),
+    transcriptSegmentIds: transcriptIds.map(String),
+    quote: row.quote_text == null ? undefined : String(row.quote_text),
+    confidenceLabel: row.confidence_label == null ? undefined : String(row.confidence_label),
+    metadata: parseJsonRecord(row.metadata)
+  };
+}
+
+function mapEvidenceCardRow(row: Record<string, unknown>): TeachingEvidenceCard {
+  const raw = parseJsonRecord(row.raw_json);
+  const rawCard = raw as Partial<TeachingEvidenceCard>;
+  const conclusion = String(row.edited_conclusion || row.conclusion || "");
+  const [fact = conclusion, interpretation = conclusion] = conclusion.split("\n");
+  return {
+    id: String(row.id),
+    category: rawCard.category || "lesson_summary",
+    title: rawCard.title || String(row.evidence_type || "教学证据"),
+    fact: rawCard.fact || fact,
+    interpretation: rawCard.interpretation || interpretation,
+    suggestion: String(row.suggestion || rawCard.suggestion || ""),
+    startMs: Number(row.start_ms || rawCard.startMs || 0),
+    endMs: Number(row.end_ms || rawCard.endMs || 0),
+    quote: String(row.quote_text || rawCard.quote || ""),
+    transcriptSegmentIds: Array.isArray(rawCard.transcriptSegmentIds) ? rawCard.transcriptSegmentIds : [],
+    metricIds: Array.isArray(rawCard.metricIds) ? rawCard.metricIds : [],
+    classroomEventIds: Array.isArray(rawCard.classroomEventIds) ? rawCard.classroomEventIds : [],
+    applicableLessonFormats: Array.isArray(rawCard.applicableLessonFormats) ? rawCard.applicableLessonFormats : ["offline_classroom_recording", "live_online_class", "recorded_online_class"],
+    confidence: rawCard.confidence || "medium",
+    uncertaintyNote: rawCard.uncertaintyNote ?? null,
+    reviewStatus: String(row.review_status || rawCard.reviewStatus || "pending_review") as ReviewStatus,
+    learningCheck: rawCard.learningCheck
+  };
+}
+
+function mapReportRow(row: Record<string, unknown>): Report {
+  return {
+    id: String(row.id),
+    lessonId: String(row.lesson_id),
+    markdownContent: String(row.markdown_content || ""),
+    generatedFrom: parseJsonRecord(row.generated_from),
+    createdAt: toIsoString(row.created_at)
   };
 }
 

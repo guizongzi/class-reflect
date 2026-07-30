@@ -117,6 +117,7 @@ FRONTEND_ORIGIN=http://localhost:3001
 创建 PostgreSQL 数据库后，执行迁移目录中的 SQL：
 
 ```bash
+psql "$DATABASE_URL" -f packages/database/migrations/20260730_m1_core_tables.sql
 psql "$DATABASE_URL" -f packages/database/migrations/20260730_workflow_runs.sql
 psql "$DATABASE_URL" -f packages/database/migrations/20260730_section_translations.sql
 psql "$DATABASE_URL" -f packages/database/migrations/20260730_teaching_evidence_agent.sql
@@ -166,7 +167,7 @@ curl http://localhost:3000/api/health
 6. 查看课堂详情、workflow 进度和候选证据
 ```
 
-当前 M1 正式骨架中，R2 上传、ASR Provider 入口、ASR 逐字稿入库、大段课堂记录生成、基础指标、Guardrail、教学证据生成 Agent 已接入；`detect_events`、`generate_report`、`export_report` 仍是后续要补齐的处理器。因此本地已经可以测试到“ASR 写库 → 分段 → 生成候选教学证据”，完整报告导出还不是全自动闭环。
+当前 M1 正式骨架中，R2 上传、ASR Provider 入口、ASR 逐字稿入库、大段课堂记录生成、确定性课堂事件、基础指标、Guardrail、教学证据生成 Agent、证据审核和报告 Markdown 生成/编辑已接入。因此本地已经可以测试到“ASR 写库 → 分段 → 生成候选教学证据 → 人工审核 → 生成报告”。PDF 或 R2 报告文件导出留作后续增强；音视频仍保存在 Cloudflare R2，Supabase/PostgreSQL 只保存对象地址和业务数据。
 
 检查和构建：
 
