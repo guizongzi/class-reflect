@@ -169,251 +169,69 @@ const logger = {
 function createAgentLlmProvider() {
   try {
     const config = readAgentLlmConfig();
-
     if (!config) {
-      logger.error("ai provider unavailable", {
-        reason: "missing_llm_config"
-      });
-
       return null;
     }
 
     return {
-      async generateJson<T>(input: {
-        promptVersion: string;
-        payload: unknown;
-      }): Promise<T> {
-        const startedAt = Date.now();
-        const endpoint = `${trimSlash(config.baseUrl)}/chat/completions`;
-
-        const payload =
-          input.payload &&
-          typeof input.payload === "object" &&
-          !Array.isArray(input.payload)
-            ? (input.payload as Record<string, unknown>)
-            : {};
-
-        const instruction =
-          typeof payload.instruction === "string"
-            ? payload.instruction
-            : "";
-
-        const userPayload = Object.fromEntries(
-          Object.entries(payload).filter(
-            ([key]) => key !== "instruction"
-          )
-        );
-
-        const systemContent = instruction
-          ? [
-              `promptVersion=${input.promptVersion}`,
-              instruction,
-              "输出严格 JSON，不要 Markdown，不要代码块，不要添加额外解释。"
-            ].join("\n\n")
-          : [
-              `promptVersion=${input.promptVersion}`,
-              "输出严格 JSON，不要 Markdown，不要代码块，不要添加额外解释。"
-            ].join("\n");
-
-        const userContent = JSON.stringify(userPayload);
-
-        const requestBody = {
-          model: config.model,
-          temperature: 0.2,
-          response_format: {
-            type: "json_object"
-          },
-          messages: [
-            {
-              role: "system",
-              content: systemContent
-            },
-            {
-              role: "user",
-              content: userContent
-            }
-          ]
-        };
-
+      async generateJson<T>(input: { promptVersion: string; payload: unknown }): Promise<T> {
         logger.info("ai call started", {
           promptVersion: input.promptVersion,
           provider: "openai-compatible",
-          model: config.model,
           endpoint: trimSlash(config.baseUrl),
-          payloadSummary: summarizePayload(input.payload),
-          requestSummary: {
-            systemPromptLength: systemContent.length,
-            userPayloadLength: userContent.length,
-            userPayloadKeys: Object.keys(userPayload),
-            segmentCount: Array.isArray(userPayload.segments)
-              ? userPayload.segments.length
-              : undefined,
-            transcriptSegmentCount: Array.isArray(
-              userPayload.transcriptSegments
-            )
-              ? userPayload.transcriptSegments.length
-              : undefined,
-            metricCount: Array.isArray(userPayload.metrics)
-              ? userPayload.metrics.length
-              : undefined,
-            classroomEventCount: Array.isArray(
-              userPayload.classroomEvents
-            )
-              ? userPayload.classroomEvents.length
-              : undefined,
-            lessonId:
-              typeof userPayload.lessonId === "string"
-                ? userPayload.lessonId
-                : undefined,
-            lessonFormat:
-              typeof userPayload.lessonFormat === "string"
-                ? userPayload.lessonFormat
-                : undefined
+          payloadSummary: summarizePayload(input.payload)
+        });
+        const response = await fetch(`${trimSlash(config.baseUrl)}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            "Content-Type": "application/json"
           },
-          systemPromptPreview: systemContent.slice(0, 2000),
-          userPayloadPreview: userContent.slice(0, 3000)
+          body: JSON.stringify({
+            model: config.model,
+            temperature: 0.2,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: `promptVersion=${input.promptVersion}\n输出严格 JSON，不要 Markdown。` },
+              { role: "user", content: JSON.stringify(input.payload) }
+            ]
+          })
         });
 
-        let response: Response;
-
-        try {
-          response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${config.apiKey}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(requestBody)
-          });
-        } catch (error) {
-          logger.error("ai call network failed", {
-            promptVersion: input.promptVersion,
-            provider: "openai-compatible",
-            model: config.model,
-            endpoint: trimSlash(config.baseUrl),
-            durationMs: Date.now() - startedAt,
-            error:
-              error instanceof Error
-                ? error.message
-                : String(error)
-          });
-
-          throw error;
-        }
-
         const bodyText = await response.text();
-
         if (!response.ok) {
           logger.error("ai call failed", {
             promptVersion: input.promptVersion,
             provider: "openai-compatible",
-            model: config.model,
             endpoint: trimSlash(config.baseUrl),
             status: response.status,
-            durationMs: Date.now() - startedAt,
-            bodyPreview: bodyText.slice(0, 1000)
+            bodyPreview: bodyText.slice(0, 500)
           });
-
-          throw new Error(
-            `LLM 请求失败 ${response.status}：${bodyText.slice(0, 500)}`
-          );
+          throw new Error(`LLM 请求失败 ${response.status}：${bodyText.slice(0, 500)}`);
         }
 
-        let body: unknown;
-
-        try {
-          body = JSON.parse(bodyText);
-        } catch {
-          logger.error("ai response envelope is not json", {
-            promptVersion: input.promptVersion,
-            provider: "openai-compatible",
-            model: config.model,
-            endpoint: trimSlash(config.baseUrl),
-            durationMs: Date.now() - startedAt,
-            bodyPreview: bodyText.slice(0, 2000)
-          });
-
-          throw new Error("LLM 接口响应不是合法 JSON");
-        }
-
-        const responseBody = body as {
-          choices?: Array<{
-            message?: {
-              content?: string;
-            };
-          }>;
-          usage?: {
-            prompt_tokens?: number;
-            completion_tokens?: number;
-            total_tokens?: number;
-          };
-        };
-
-        const content =
-          responseBody.choices?.[0]?.message?.content;
-
+        const body = JSON.parse(bodyText);
+        const content = body.choices?.[0]?.message?.content;
         if (!content) {
           logger.error("ai call failed", {
             promptVersion: input.promptVersion,
             provider: "openai-compatible",
-            model: config.model,
             endpoint: trimSlash(config.baseUrl),
-            reason: "missing_content",
-            durationMs: Date.now() - startedAt,
-            responseEnvelopePreview: bodyText.slice(0, 2000)
+            reason: "missing_content"
           });
-
           throw new Error("LLM 没有返回内容");
         }
 
         logger.info("ai call completed", {
           promptVersion: input.promptVersion,
           provider: "openai-compatible",
-          model: config.model,
           endpoint: trimSlash(config.baseUrl),
-          durationMs: Date.now() - startedAt,
-          responseSize: content.length,
-          rawResponsePreview: content.slice(0, 5000),
-          usage: responseBody.usage
-            ? {
-                promptTokens:
-                  responseBody.usage.prompt_tokens,
-                completionTokens:
-                  responseBody.usage.completion_tokens,
-                totalTokens:
-                  responseBody.usage.total_tokens
-              }
-            : undefined
+          responseSize: content.length
         });
-
-        try {
-          return parseJsonObject(content) as T;
-        } catch (error) {
-          logger.error("ai content json parse failed", {
-            promptVersion: input.promptVersion,
-            provider: "openai-compatible",
-            model: config.model,
-            endpoint: trimSlash(config.baseUrl),
-            durationMs: Date.now() - startedAt,
-            rawResponsePreview: content.slice(0, 5000),
-            error:
-              error instanceof Error
-                ? error.message
-                : String(error)
-          });
-
-          throw error;
-        }
+        return parseJsonObject(content) as T;
       }
     };
-  } catch (error) {
-    logger.error("ai provider creation failed", {
-      error:
-        error instanceof Error
-          ? error.message
-          : String(error)
-    });
-
+  } catch {
     return null;
   }
 }
