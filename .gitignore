@@ -13,3 +13,12 @@ __pycache__/
 .env
 .DS_Store
 npm-debug.log
+
+# Local classroom media samples and interrupted browser downloads.
+*.mp4
+*.mov
+*.m4v
+*.webm
+*.wav
+*.mp3
+*.part

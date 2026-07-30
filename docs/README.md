@@ -6,7 +6,6 @@
 | --- | --- | --- |
 | `TECHNICAL_MANUAL.md` | M1 主技术手册 | M1 产品边界、技术选型、真实链路、数据库、Agent/Tool/Worker 分工 |
 | `IMPLEMENTATION_AND_API_MANUAL.md` | 当前实现与接口核对手册 | 查看当前已实现功能、现有后端接口、legacy 可迁移能力和 M1 待实现清单 |
-| `MVP产品设计及技术方案.md` | 历史 MVP 方案摘要 | 用于回看早期产品交互和技术设想；当前开发、验收、技术选型、数据库和部署不以它为准 |
 | `ARCHITECTURE.md` | 架构速览 | 用于快速查看目录和分层，详细规则以主技术手册为准 |
 | `ARCHITECTURE_BASELINE.md` | 文件架构与长期架构标准 | 用于判断文件应放在哪一层、模块如何拆、长期如何扩展；不反向扩大当前 M1 功能范围 |
 
@@ -16,7 +15,6 @@
 TECHNICAL_MANUAL.md
 → IMPLEMENTATION_AND_API_MANUAL.md
 → ARCHITECTURE.md
-→ MVP产品设计及技术方案.md
 ```
 
 如果讨论“文件放哪、层怎么分、以后怎么扩展”，优先级为：

@@ -140,6 +140,23 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
         }
       });
 
+      if (step.key === "build_sections") {
+        await updateWorkflowRunStatus({
+          workflowRunId: workflow.id,
+          status: "waiting_for_human",
+          currentStep: step.key,
+          progress,
+          output: {
+            [step.key]: {
+              ...(result.output || {}),
+              waitingFor: "teacher_transcript_confirmation",
+              warnings: result.warnings || []
+            }
+          }
+        });
+        return;
+      }
+
       if (step.key === "wait_human_review") return;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

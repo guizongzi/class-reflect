@@ -1,5 +1,10 @@
 import { Injectable } from "@nestjs/common";
-import { cancelWorkflowRunForLesson, getWorkflowStatusForLesson, retryWorkflowRunForLesson } from "@class-reflect/database";
+import {
+  cancelWorkflowRunForLesson,
+  confirmTranscriptReviewForLesson,
+  getWorkflowStatusForLesson,
+  retryWorkflowRunForLesson
+} from "@class-reflect/database";
 import { workflowStepOptions, type WorkflowStepKey } from "@class-reflect/shared-types";
 
 @Injectable()
@@ -15,6 +20,10 @@ export class WorkflowsService {
   retryLessonWorkflow(lessonId: string, body: unknown) {
     const fromStepKey = parseWorkflowStepKey(body);
     return retryWorkflowRunForLesson({ lessonId, fromStepKey });
+  }
+
+  confirmTranscriptReview(lessonId: string) {
+    return confirmTranscriptReviewForLesson(lessonId);
   }
 }
 

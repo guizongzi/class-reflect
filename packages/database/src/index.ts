@@ -15,6 +15,8 @@ import {
 } from "@class-reflect/shared-types";
 import { Pool } from "pg";
 
+type Queryable = Pick<Pool, "query">;
+
 export type RepositoryResult<T> = Promise<T>;
 
 export interface WorkflowRepository {
@@ -181,7 +183,9 @@ export async function listLessonRecords(): Promise<LessonListRecord[]> {
       select *
       from lesson_videos
       where lesson_id = l.id
-      order by created_at desc
+      order by
+        case when upload_status = 'uploaded' then 0 else 1 end,
+        created_at desc
       limit 1
     ) v on true
     left join lateral (
@@ -476,6 +480,46 @@ export async function listTranscriptSegments(input: {
   }));
 }
 
+export async function updateTranscriptSegmentsProjection(input: {
+  lessonId: string;
+  videoId: string;
+  segments: TranscriptSegment[];
+}): Promise<TranscriptSegment[]> {
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    for (const segment of input.segments) {
+      await client.query(`
+        update transcript_segments
+        set
+          original_text = $4,
+          speaker_label = $5,
+          confidence = coalesce($6, confidence),
+          source = 'transcript_agent',
+          updated_at = now()
+        where lesson_id = $1
+          and video_id = $2
+          and id = $3
+      `, [
+        input.lessonId,
+        input.videoId,
+        segment.id,
+        segment.text,
+        segment.speakerLabel || "未知",
+        segment.confidence ?? null
+      ]);
+    }
+    await client.query("update lessons set updated_at = now() where id = $1", [input.lessonId]);
+    await client.query("commit");
+    return listTranscriptSegments({ lessonId: input.lessonId, videoId: input.videoId });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function saveLessonSections(input: {
   lessonId: string;
   videoId: string;
@@ -484,6 +528,7 @@ export async function saveLessonSections(input: {
   const client = await getPool().connect();
   try {
     await client.query("begin");
+    await ensureTranscriptProjectionColumns(client);
     await client.query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
 
@@ -491,9 +536,9 @@ export async function saveLessonSections(input: {
     for (const section of input.sections) {
       const result = await client.query(`
         insert into lesson_sections
-          (lesson_id, video_id, start_ms, end_ms, title, summary_text, confidence_label, tags)
-        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-        returning id, lesson_id, video_id, start_ms, end_ms, title, summary_text, confidence_label, tags
+          (lesson_id, video_id, start_ms, end_ms, title, summary_text, confidence_label, tags, transcript_segment_ids, metadata)
+        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb)
+        returning id, lesson_id, video_id, start_ms, end_ms, title, summary_text, confidence_label, tags, transcript_segment_ids, metadata
       `, [
         input.lessonId,
         input.videoId,
@@ -502,20 +547,12 @@ export async function saveLessonSections(input: {
         section.title,
         section.summaryText,
         section.confidenceLabel,
-        JSON.stringify(section.tags)
+        JSON.stringify(section.tags),
+        JSON.stringify(section.transcriptSegmentIds || []),
+        JSON.stringify({ projection: "display_transcript" })
       ]);
       const row = result.rows[0];
-      saved.push({
-        id: String(row.id),
-        lessonId: String(row.lesson_id),
-        videoId: String(row.video_id),
-        startMs: Number(row.start_ms || 0),
-        endMs: Number(row.end_ms || 0),
-        title: String(row.title || ""),
-        summaryText: String(row.summary_text || ""),
-        confidenceLabel: String(row.confidence_label || ""),
-        tags: Array.isArray(row.tags) ? row.tags.map(String) : []
-      });
+      saved.push(mapLessonSectionRow(row));
     }
     await client.query("update lessons set updated_at = now() where id = $1", [input.lessonId]);
     await client.query("commit");
@@ -769,9 +806,10 @@ export async function saveTeachingEvidenceCards(input: {
   cards: TeachingEvidenceCard[];
   sourceModel: string;
 }): Promise<Array<Record<string, unknown>>> {
-  if (!input.cards.length) return [];
-
   const rows: Array<Record<string, unknown>> = [];
+  await getPool().query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+  if (!input.cards.length) return rows;
+
   for (const card of input.cards) {
     const result = await getPool().query(`
       insert into evidence_cards
@@ -1002,11 +1040,18 @@ export async function markLessonVideoUploaded(videoId: string): Promise<LessonVi
   await touchLessonForVideo(videoId);
   const video = result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
   if (video) {
-    await createOrResumeLessonWorkflow(video, {
+    const run = await createOrResumeLessonWorkflow(video, {
       videoObjectKey: video.objectKey,
       audioObjectKey: video.audioObjectKey
     });
     await updateWorkflowStepByVideo(video.id, "upload_video", "completed", 100);
+    const nextStepKey = getNextWorkflowStepForVideo(video);
+    await updateWorkflowRunStatus({
+      workflowRunId: run.id,
+      status: "queued",
+      currentStep: nextStepKey,
+      progress: getWorkflowProgressForStep(nextStepKey)
+    });
   }
   return video;
 }
@@ -1047,11 +1092,18 @@ export async function markLessonVideoAudioUploaded(videoId: string): Promise<Les
   await touchLessonForVideo(videoId);
   const video = result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
   if (video) {
-    await createOrResumeLessonWorkflow(video, {
+    const run = await createOrResumeLessonWorkflow(video, {
       videoObjectKey: video.objectKey,
       audioObjectKey: video.audioObjectKey
     });
     await updateWorkflowStepByVideo(video.id, "upload_audio", "completed", 100);
+    const nextStepKey = getNextWorkflowStepForVideo(video);
+    await updateWorkflowRunStatus({
+      workflowRunId: run.id,
+      status: "queued",
+      currentStep: nextStepKey,
+      progress: getWorkflowProgressForStep(nextStepKey)
+    });
   }
   return video;
 }
@@ -1082,7 +1134,7 @@ export async function getWorkflowStatusForLesson(lessonId: string): Promise<Work
     limit 1
   `, [lessonId]);
   if (!result.rows[0]) {
-    return { task: null, steps: workflowStepOptions.map((step) => emptyWorkflowStep(step.key, step.label)) };
+    return { task: null, steps: [] };
   }
 
   const task = mapWorkflowRunRow(result.rows[0]);
@@ -1124,11 +1176,49 @@ export async function retryWorkflowRunForLesson(input: {
   lessonId: string;
   fromStepKey?: WorkflowStepKey | null;
 }): Promise<WorkflowStatusRecord> {
-  const current = await getWorkflowStatusForLesson(input.lessonId);
-  if (!current.task) return current;
+  let current = await getWorkflowStatusForLesson(input.lessonId);
+  if (!current.task) {
+    const videos = await listLessonVideoRecords(input.lessonId);
+    const video = videos.find((item) => item.uploadStatus === "uploaded") || videos[0];
+    if (!video) return current;
 
+    const run = await createOrResumeLessonWorkflow(video, {
+      videoObjectKey: video.objectKey,
+      audioObjectKey: video.audioObjectKey
+    });
+    await updateWorkflowStep({ workflowRunId: run.id, stepKey: "create_lesson", status: "completed", progress: 100 });
+    if (video.uploadStatus === "uploaded") {
+      await updateWorkflowStep({ workflowRunId: run.id, stepKey: "upload_video", status: "completed", progress: 100 });
+    }
+    if (video.audioUploadStatus === "uploaded") {
+      await updateWorkflowStep({ workflowRunId: run.id, stepKey: "upload_audio", status: "completed", progress: 100 });
+    }
+    const nextStepKey = getNextWorkflowStepForVideo(video);
+    await updateWorkflowRunStatus({
+      workflowRunId: run.id,
+      status: "queued",
+      currentStep: nextStepKey,
+      progress: getWorkflowProgressForStep(nextStepKey)
+    });
+    return getWorkflowStatusForLesson(input.lessonId);
+  }
+
+  const taskVideo = await getLessonVideoRecord(current.task.videoId);
+  if (taskVideo) {
+    await updateWorkflowStep({ workflowRunId: current.task.id, stepKey: "create_lesson", status: "completed", progress: 100 });
+    if (taskVideo.uploadStatus === "uploaded") {
+      await updateWorkflowStep({ workflowRunId: current.task.id, stepKey: "upload_video", status: "completed", progress: 100 });
+    }
+    if (taskVideo.audioUploadStatus === "uploaded") {
+      await updateWorkflowStep({ workflowRunId: current.task.id, stepKey: "upload_audio", status: "completed", progress: 100 });
+    }
+    current = await getWorkflowStatusForLesson(input.lessonId);
+  }
+
+  const activeTask = current.task;
+  if (!activeTask) return current;
   const fallbackStep = current.steps.find((step) => ["failed", "cancelled", "running", "queued", "waiting"].includes(step.status))?.stepKey;
-  const fromStepKey = input.fromStepKey || fallbackStep || current.task.currentStep || "upload_video";
+  const fromStepKey = input.fromStepKey || fallbackStep || activeTask.currentStep || "upload_video";
   const fromIndex = Math.max(workflowStepOptions.findIndex((step) => step.key === fromStepKey), 0);
   const resetStepKeys = workflowStepOptions.slice(fromIndex).map((step) => step.key);
   const humanReviewIndex = workflowStepOptions.findIndex((step) => step.key === "wait_human_review");
@@ -1147,7 +1237,7 @@ export async function retryWorkflowRunForLesson(input: {
       updated_at = now()
     where id = $1
   `, [
-    current.task.id,
+    activeTask.id,
     fromStepKey,
     Math.round((fromIndex / Math.max(workflowStepOptions.length - 1, 1)) * 100)
   ]);
@@ -1162,7 +1252,8 @@ export async function retryWorkflowRunForLesson(input: {
       updated_at = now()
     where workflow_run_id = $1
       and step_key = any($2::text[])
-  `, [current.task.id, resetStepKeys]);
+  `, [activeTask.id, resetStepKeys]);
+  await invalidateArtifactsForWorkflowRetry(activeTask, fromIndex);
   if (fromIndex > humanReviewIndex) {
     await getPool().query(`
       update workflow_step_runs
@@ -1174,9 +1265,89 @@ export async function retryWorkflowRunForLesson(input: {
         updated_at = now()
       where workflow_run_id = $1
         and step_key = 'wait_human_review'
-    `, [current.task.id]);
+    `, [activeTask.id]);
   }
   return getWorkflowStatusForLesson(input.lessonId);
+}
+
+export async function confirmTranscriptReviewForLesson(lessonId: string): Promise<WorkflowStatusRecord> {
+  const current = await getWorkflowStatusForLesson(lessonId);
+  const activeTask = current.task;
+  if (!activeTask) return current;
+
+  const buildSectionsStep = current.steps.find((step) => step.stepKey === "build_sections");
+  if (activeTask.status !== "waiting_for_human" || activeTask.currentStep !== "build_sections") return current;
+  if (buildSectionsStep?.status !== "completed") return current;
+
+  const nextStepKey: WorkflowStepKey = "calculate_metrics";
+  await getPool().query(`
+    update workflow_runs
+    set
+      status = 'queued',
+      current_step = $2,
+      progress = $3,
+      error_message = null,
+      locked_at = null,
+      locked_by = null,
+      finished_at = null,
+      updated_at = now()
+    where id = $1
+  `, [activeTask.id, nextStepKey, getWorkflowProgressForStep(nextStepKey)]);
+
+  return getWorkflowStatusForLesson(lessonId);
+}
+
+async function invalidateArtifactsForWorkflowRetry(activeTask: WorkflowRunRecord, fromIndex: number) {
+  const stepIndex = (stepKey: WorkflowStepKey) => workflowStepOptions.findIndex((step) => step.key === stepKey);
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    if (fromIndex <= stepIndex("build_sections")) {
+      await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [activeTask.lessonId, activeTask.videoId]);
+    }
+    if (fromIndex <= stepIndex("calculate_metrics")) {
+      await client.query("delete from classroom_metrics where lesson_id = $1 and video_id = $2", [activeTask.lessonId, activeTask.videoId]);
+    }
+    if (fromIndex <= stepIndex("detect_events")) {
+      await client.query("delete from classroom_events where lesson_id = $1 and video_id = $2", [activeTask.lessonId, activeTask.videoId]);
+    }
+    if (fromIndex <= stepIndex("generate_evidence")) {
+      await client.query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [activeTask.lessonId, activeTask.videoId]);
+    }
+    if (fromIndex <= stepIndex("wait_human_review") && fromIndex > stepIndex("generate_evidence")) {
+      await client.query(`
+        update evidence_cards
+        set
+          review_status = 'pending_review',
+          edited_conclusion = null,
+          teacher_note = null,
+          suggestion = coalesce(raw_json->>'suggestion', suggestion),
+          updated_at = now()
+        where lesson_id = $1 and video_id = $2
+      `, [activeTask.lessonId, activeTask.videoId]);
+    }
+    if (fromIndex <= stepIndex("generate_report")) {
+      await client.query("delete from reports where lesson_id = $1", [activeTask.lessonId]);
+    }
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function getNextWorkflowStepForVideo(video: LessonVideoRecord): WorkflowStepKey {
+  if (video.uploadStatus !== "uploaded") return "upload_video";
+  if (video.audioUploadStatus !== "uploaded") return "upload_audio";
+  return "probe_media";
+}
+
+function getWorkflowProgressForStep(stepKey: WorkflowStepKey) {
+  const index = workflowStepOptions.findIndex((step) => step.key === stepKey);
+  if (index < 0) return 0;
+  return Math.round((index / Math.max(workflowStepOptions.length - 1, 1)) * 100);
 }
 
 export async function claimNextWorkflowRun(workerId: string): Promise<WorkflowRunRecord | null> {
@@ -1409,6 +1580,7 @@ function mapWorkflowStepRow(row: Record<string, unknown>): WorkflowStepRunRecord
 }
 
 function mapLessonSectionRow(row: Record<string, unknown>): LessonSection {
+  const transcriptIds = Array.isArray(row.transcript_segment_ids) ? row.transcript_segment_ids : [];
   return {
     id: String(row.id),
     lessonId: String(row.lesson_id),
@@ -1418,8 +1590,14 @@ function mapLessonSectionRow(row: Record<string, unknown>): LessonSection {
     title: String(row.title || ""),
     summaryText: String(row.edited_summary_text || row.summary_text || ""),
     confidenceLabel: String(row.confidence_label || ""),
-    tags: Array.isArray(row.tags) ? row.tags.map(String) : []
+    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    transcriptSegmentIds: transcriptIds.map(String)
   };
+}
+
+async function ensureTranscriptProjectionColumns(client: Queryable = getPool()) {
+  await client.query("alter table lesson_sections add column if not exists transcript_segment_ids jsonb not null default '[]'");
+  await client.query("alter table lesson_sections add column if not exists metadata jsonb not null default '{}'");
 }
 
 function mapClassroomEventRow(row: Record<string, unknown>): ClassroomEvent {
@@ -1456,6 +1634,7 @@ function mapEvidenceCardRow(row: Record<string, unknown>): TeachingEvidenceCard 
   return {
     id: String(row.id),
     category: rawCard.category || "lesson_summary",
+    sentiment: rawCard.sentiment || "neutral",
     title: rawCard.title || String(row.evidence_type || "教学证据"),
     fact: rawCard.fact || fact,
     interpretation: rawCard.interpretation || interpretation,
@@ -1470,7 +1649,9 @@ function mapEvidenceCardRow(row: Record<string, unknown>): TeachingEvidenceCard 
     confidence: rawCard.confidence || "medium",
     uncertaintyNote: rawCard.uncertaintyNote ?? null,
     reviewStatus: String(row.review_status || rawCard.reviewStatus || "pending_review") as ReviewStatus,
-    learningCheck: rawCard.learningCheck
+    learningCheck: rawCard.learningCheck,
+    analysis: rawCard.analysis,
+    teacherView: rawCard.teacherView
   };
 }
 

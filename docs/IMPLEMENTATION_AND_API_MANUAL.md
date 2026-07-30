@@ -1,40 +1,59 @@
-# 已实现功能、后端接口与 M1 待实现清单
+# 已实现功能、后端接口与 M1 验收手册
 
-> 文档状态：当前实现核对手册。本文只描述当前 GitHub `main` 已经进入正式骨架后的实际状态，不把 `legacy/node-mvp` 中的旧跑通链路算作当前新架构已实现功能。旧链路可以作为迁移参考，但后续代码应写入 `apps/*` 与 `packages/*` 的正式分层。
+> 文档状态：当前实现核对手册。本文描述当前正式骨架中的真实能力，不把 `legacy/node-mvp` 算作现行实现。长期文件结构以 `ARCHITECTURE_BASELINE.md` 为准，产品和流程边界以 `TECHNICAL_MANUAL.md` 为准。
 
 ## 1. 当前实现总览
 
-当前仓库已经完成的是“正式工程骨架 + 基础前后端入口 + 第一版工作台 UI 骨架”，还不是完整 M1 业务闭环。
+当前仓库已经进入正式 pnpm Workspace + Turborepo 骨架，并跑通 M1 主链路：
 
-已完成：
+```text
+创建课堂
+→ 选择课堂类型
+→ 上传视频到 R2
+→ 浏览器生成音频并上传到 R2
+→ Worker 调用 ASR
+→ 保存逐字稿
+→ 逐字稿处理 Agent 生成展示投影和分析投影
+→ 校订原文并人工确认
+→ 计算非 LLM 指标
+→ 识别课堂事件
+→ 教学证据生成 Agent 生成候选证据
+→ 人工复核证据
+→ 生成 Markdown 报告
+```
 
-- Monorepo：`pnpm Workspace + Turborepo`。
+已实现：
+
 - 前端：`apps/web`，Next.js + React + TypeScript。
 - API：`apps/api`，NestJS + TypeScript。
-- Worker：`apps/worker`，独立 TypeScript Worker 入口。
-- 共享包：`packages/shared-types`、`api-contracts`、`domain`、`database`、`providers`、`agents`、`metrics`、`guardrails`、`config`、`observability` 等。
-- 部署配置：Cloud Build 同时构建并部署 API、Web、Worker Job。
-- 旧实现归档：旧 Node/Express + Vite 版本移动到 `legacy/node-mvp`。
-- 文档：`TECHNICAL_MANUAL.md` 与 `ARCHITECTURE_BASELINE.md` 已对齐新骨架。
-- 课堂库：从 API 读取真实课堂列表，显示上传、处理、转写、报告状态，支持刷新和删除。
+- Worker：`apps/worker`，支持常驻轮询和有限并发。
+- 数据：`packages/database` 接入 Supabase/PostgreSQL。
+- 存储：`packages/providers` 接入 Cloudflare R2 签名上传和读取。
+- ASR：接入阿里云 ASR Provider，保留 mock provider 用于烟测。
+- 逐字稿 Agent：生成展示投影、分析投影和有意义的分段标题。
+- 教学证据 Agent：生成带来源时间点、积极/中性/消极语气分类的证据卡。
+- 确定性指标：语速、连续讲授、停顿、问题、等待、反馈、填充词、模糊指代、课堂结构等。
+- 人工关口：校订原文确认、证据人工复核。
+- 部署：`infra/google-cloud/cloudbuild.yaml` 同时部署 API、Web、Worker Job。
 
-未完成：
+当前仍待增强：
 
-- 新 NestJS API 已开始接入 Supabase/PostgreSQL 的课堂列表和删除；R2、阿里云 ASR、LLM 尚未迁入新架构。
-- 新 Next.js 前端尚未真实调用上传、处理、转写、分析、复核、报告接口。
-- Worker 目前是职责骨架，尚未执行真实视频处理链。
-- 当前新架构中还没有完整数据库 repository、provider 实现和 processor 拆分。
+- Worker 端 FFmpeg 回退抽音频。当前优先使用浏览器生成并上传的音频。
+- 删除课堂时同步清理 R2 对象。
+- 批量翻译、译文人工编辑保存。
+- PDF / Docx 报告导出。
+- 登录、多用户、多租户和权限隔离。
 
-## 2. 已实现前端功能
+## 2. 前端功能
 
 ### 2.1 页面路由
 
-| 路由 | 文件 | 当前状态 |
+| 路由 | 文件 | 状态 |
 | --- | --- | --- |
 | `/` | `apps/web/src/app/page.tsx` | 入口页，进入课堂视频库 |
-| `/lessons` | `apps/web/src/app/lessons/page.tsx` | 课堂视频库页面 |
-| `/lessons/new` | `apps/web/src/app/lessons/new/page.tsx` | 新建课堂工作台页面 |
-| `/lessons/[lessonId]` | `apps/web/src/app/lessons/[lessonId]/page.tsx` | 指定课堂工作台页面 |
+| `/lessons` | `apps/web/src/app/lessons/page.tsx` | 课堂视频库 |
+| `/lessons/new` | `apps/web/src/app/lessons/new/page.tsx` | 新建课堂工作台 |
+| `/lessons/[lessonId]` | `apps/web/src/app/lessons/[lessonId]/page.tsx` | 指定课堂工作台 |
 
 ### 2.2 课堂视频库
 
@@ -46,18 +65,17 @@ apps/web/src/features/lesson-library/lesson-library.tsx
 
 已实现：
 
-- 顶部产品标题和“上传新视频”入口。
 - 从 `GET /api/lessons` 读取真实课堂列表。
-- 显示上传状态、处理状态、转写段数和报告数量。
+- 显示上传状态、处理状态、当前步骤、逐字稿段数、证据数和报告数。
 - 支持刷新状态。
-- 支持删除课堂，删除后自动刷新列表。
-- 支持加载中、空状态和错误提示。
-- UI 已去掉固定 demo 课堂，避免误认为有真实数据。
+- 支持删除课堂。
+- “刷新状态”和“新建视频”平行显示。
+- UI 使用面向教师的文案，不外显 R2、ASR 对象地址等系统描述。
 
-未实现：
+待增强：
 
-- 删除课堂时同步清理 R2 对象文件。
-- 课堂列表分页、搜索和筛选。
+- 列表分页、搜索、筛选。
+- 删除课堂时同步删除 R2 对象。
 
 ### 2.3 课堂工作台
 
@@ -69,42 +87,38 @@ apps/web/src/features/lesson-workspace/lesson-workspace-shell.tsx
 
 已实现：
 
-- 桌面端双区工作台骨架。
-- 主区包含视频上传占位、课堂类型选择、课堂记录编辑区。
-- 右侧包含 AI 任务助手、6 阶段进度条、处理卡片。
-- 三种课堂类型显示：
-  - 线下课堂录像；
-  - 直播网课；
-  - 录播网课。
-- 大段课堂记录编辑的 UI 占位，不采用逐句确认模式。
+- 视频选择、拖拽、预览和云端视频播放。
+- 新建视频后必须选择课堂类型，确认后才进入上传。
+- 原始视频上传进度和浏览器音频上传进度。
+- 6 阶段流程条：
+  - 对话发起；
+  - 处理过程；
+  - 校订原文；
+  - 核对证据；
+  - 人工复核；
+  - 生成报告。
+- 右侧处理卡片只展示当前大阶段的小步骤。
+- 每个 workflow 步骤显示等待、排队中、进行中、成功、失败、已取消等状态。
+- 支持停止、从当前阶段重试、从具体步骤重试。
+- 回退重跑前弹出确认卡片，说明后续内容会作废。
+- 逐字稿分段时间轴：视频下方显示分段条，拖动或点击后显示对应段落。
+- 文稿编辑保存：支持保存 section 或 segment 的校订内容。
+- 校订原文关口：`build_sections` 完成后停住，右侧显示“确认校订完成”按钮。
+- 内容自动刷新：逐字稿、分段、证据或报告产生后，前端会自动重新读取课堂详情。
+- 证据复核：证据卡可跳转视频时间点、接受、驳回或要求更多上下文；处理后从待处理列表消失。
+- 报告生成和 Markdown 编辑保存。
+- 右侧本地 AI 对话框占位，当前提供基于本地上下文的轻量回复，后续可接真实对话服务。
 
-未实现：
+待增强：
 
-- 真实拖拽上传。
-- 视频预览与播放。
-- 前端生成音频并并行上传。
-- 上传进度条。
-- 轮询处理状态。
-- 时间轴逐字稿展示。
-- 大段记录保存。
-- 按需翻译。
-- 证据卡复核。
-- 报告预览与导出。
-- 移动端细节交互。
+- 移动端细节。
+- 证据卡编辑后接受的完整编辑 UI。
+- 批量翻译和译文保存。
+- 更丰富的报告导出。
 
-## 3. 已实现后端接口
+## 3. 后端接口
 
-当前新 API 位于：
-
-```text
-apps/api
-```
-
-运行时：
-
-```text
-NestJS + Fastify
-```
+当前 API 位于 `apps/api`，运行时是 NestJS + Fastify。
 
 ### 3.1 健康检查
 
@@ -112,13 +126,7 @@ NestJS + Fastify
 GET /api/health
 ```
 
-控制器：
-
-```text
-apps/api/src/modules/health/health.controller.ts
-```
-
-返回示例：
+返回：
 
 ```json
 {
@@ -126,15 +134,9 @@ apps/api/src/modules/health/health.controller.ts
   "service": "class-reflect-api",
   "runtime": "nestjs",
   "asr_provider": "aliyun",
-  "asr_model": "qwen3-asr-flash-filetrans"
+  "asr_model": "fun-asr-2025-11-07"
 }
 ```
-
-当前状态：
-
-- 已实现。
-- 读取 `packages/config` 的运行配置。
-- 可用于 Cloud Run 健康检查和部署验证。
 
 ### 3.2 创建课堂
 
@@ -142,20 +144,7 @@ apps/api/src/modules/health/health.controller.ts
 POST /api/lessons
 ```
 
-控制器：
-
-```text
-apps/api/src/modules/lessons/lessons.controller.ts
-```
-
-请求契约：
-
-```text
-packages/api-contracts/src/index.ts
-CreateLessonRequestSchema
-```
-
-支持字段：
+请求：
 
 ```json
 {
@@ -168,82 +157,42 @@ CreateLessonRequestSchema
 }
 ```
 
-兼容 snake_case：
+状态：
 
-```json
-{
-  "lesson_title": "课堂视频复盘",
-  "course_title": "五年级数学",
-  "lesson_format": "offline_classroom_recording",
-  "analysis_goal": "分析教师提问后的等待时间"
-}
-```
+- 已接入 `packages/database`。
+- 支持 camelCase 和部分 snake_case 兼容。
+- 写入 `lessons`。
 
-返回示例：
-
-```json
-{
-  "id": "uuid",
-  "lessonTitle": "课堂视频复盘",
-  "courseTitle": "五年级数学",
-  "lessonFormat": "offline_classroom_recording",
-  "status": "created"
-}
-```
-
-当前状态：
-
-- 已接入 `packages/database`，写入 `lessons` 表。
-- 使用 `packages/domain` 的 `createLessonDraft`。
-- 兼容旧表结构：如果数据库暂时没有 `lesson_format` 或 `analysis_goal` 字段，会先写入基础课堂字段。
-
-### 3.3 获取课堂列表
+### 3.3 课堂列表
 
 ```http
 GET /api/lessons
 ```
 
-返回示例：
+状态：
 
-```json
-{
-  "lessons": []
-}
-```
-
-当前状态：
-
-- 已接入 `packages/database` 和 Supabase/PostgreSQL。
 - 返回真实课堂列表。
-- 聚合最近视频、最近 workflow、逐字稿段数、大段记录数、证据卡数和报告数。
+- 聚合最近视频、workflow、逐字稿段数、大段记录数、证据卡数和报告数。
 
-### 3.4 获取课堂详情
+### 3.4 课堂详情
 
 ```http
 GET /api/lessons/:lessonId
 ```
 
-返回示例：
+返回内容：
 
-```json
-{
-  "lesson": {
-    "id": "lessonId",
-    "lessonTitle": "课堂视频复盘",
-    "lessonFormat": "offline_classroom_recording",
-    "status": "created"
-  },
-  "sections": [],
-  "transcriptSegments": [],
-  "evidenceCards": []
-}
-```
+- lesson 基本信息。
+- videos，含播放签名 URL 或播放错误。
+- sections。
+- transcriptSegments。
+- evidenceCards。
+- reports。
 
-当前状态：
+状态：
 
-- 已接入 `packages/database` 和 Supabase/PostgreSQL。
-- 返回真实课堂、课堂大段、逐字稿、证据卡和报告列表。
-- 暂未返回视频播放签名 URL。
+- 已接入真实数据库。
+- 已支持云端视频播放 URL。
 
 ### 3.5 删除课堂
 
@@ -251,34 +200,66 @@ GET /api/lessons/:lessonId
 DELETE /api/lessons/:lessonId
 ```
 
-返回示例：
+状态：
 
-```json
-{
-  "ok": true,
-  "deletedLessonId": "lessonId"
-}
+- 删除 lesson 记录。
+- 相关数据库记录依赖外键级联。
+- 尚未删除 R2 对象。
+
+### 3.6 视频上传 URL
+
+```http
+POST /api/lessons/:lessonId/videos/upload-url
 ```
 
-当前状态：
+状态：
 
-- 已接入 `packages/database`。
-- 删除 `lessons` 记录，依赖数据库外键级联删除相关记录。
-- 尚未同步删除 R2 中的原始视频、临时音频和导出文件。
+- 创建 video 记录。
+- 生成 R2 预签名 PUT URL。
+- 返回 videoId、lessonId、uploadUrl、headers。
 
-### 3.6 获取课堂处理状态
+### 3.7 视频上传完成
+
+```http
+POST /api/lessons/videos/:videoId/complete-upload
+```
+
+状态：
+
+- 检查 R2 对象存在。
+- 更新视频上传状态。
+- 在视频和音频条件满足时创建或唤醒 workflow。
+
+### 3.8 音频上传 URL
+
+```http
+POST /api/lessons/videos/:videoId/audio-upload-url
+```
+
+状态：
+
+- 生成 ASR 用音频的 R2 预签名 PUT URL。
+- 前端用浏览器生成 WAV 后上传。
+
+### 3.9 音频上传完成
+
+```http
+POST /api/lessons/videos/:videoId/complete-audio-upload
+```
+
+状态：
+
+- 检查音频对象存在。
+- 更新音频上传状态。
+- 在视频和音频条件满足时创建或唤醒 workflow。
+
+### 3.10 获取处理状态
 
 ```http
 GET /api/lessons/:lessonId/status
 ```
 
-控制器：
-
-```text
-apps/api/src/modules/workflows/workflows.controller.ts
-```
-
-返回示例：
+返回：
 
 ```json
 {
@@ -293,51 +274,117 @@ apps/api/src/modules/workflows/workflows.controller.ts
   },
   "steps": [
     {
-      "stepKey": "upload_video",
-      "label": "上传视频",
-      "status": "completed",
-      "progress": 100,
-      "errorMessage": null
+      "stepKey": "submit_asr",
+      "label": "提交转写",
+      "status": "running",
+      "progress": 25,
+      "startedAt": "2026-07-30T10:00:00.000Z",
+      "finishedAt": null
     }
   ]
 }
 ```
 
-当前状态：
+状态：
 
-- 已接入 `workflow_runs` 与 `workflow_step_runs`。
-- 上传完成后会创建或恢复 workflow。
-- 前端 AI 任务助手会轮询该接口并显示步骤、进度和失败原因。
-- 数据库 migration 文件：`packages/database/migrations/20260730_workflow_runs.sql`。
+- 已接入 `workflow_runs` 和 `workflow_step_runs`。
+- 返回每一步开始、结束时间，前端可显示用时。
 
-## 4. 已实现 API 契约与共享类型
+### 3.11 停止处理
 
-### 4.1 课堂类型
-
-文件：
-
-```text
-packages/shared-types/src/index.ts
-packages/api-contracts/src/index.ts
+```http
+POST /api/lessons/:lessonId/status/cancel
 ```
 
-枚举：
+状态：
 
-```text
-offline_classroom_recording
-live_online_class
-recorded_online_class
+- 将当前 workflow 标记为 cancelled。
+- 取消等待、排队和运行中的步骤。
+
+### 3.12 重试处理
+
+```http
+POST /api/lessons/:lessonId/status/retry
 ```
 
-已用于：
+请求：
 
-- 前端课堂类型卡片。
-- 创建课堂请求校验。
-- domain draft 创建。
+```json
+{
+  "fromStepKey": "wait_human_review"
+}
+```
 
-### 4.2 复核状态
+状态：
 
-当前共享类型：
+- 从指定步骤回退。
+- 作废对应下游产物。
+- 从人工复核阶段回退时，不重新生成证据，而是把已有证据恢复为待处理，并清理教师复核痕迹。
+
+### 3.13 确认校订完成
+
+```http
+POST /api/lessons/:lessonId/status/confirm-transcript
+```
+
+状态：
+
+- 只在 workflow 处于 `waiting_for_human` 且当前步骤是 `build_sections` 时生效。
+- 推进到 `calculate_metrics`，由 worker 继续后续分析。
+- 在其他阶段调用不会误推进。
+
+### 3.14 保存文稿校订
+
+```http
+PATCH /api/lessons/:lessonId/transcripts/sections/:sectionId
+PATCH /api/lessons/:lessonId/transcripts/segments/:segmentId
+```
+
+状态：
+
+- 保存用户校订内容。
+- 后续分析读取当前校订后的展示/分析投影。
+
+### 3.15 按需翻译
+
+```http
+POST /api/lessons/:lessonId/translate
+```
+
+状态：
+
+- 支持 section 或 segment 翻译。
+- Provider 支持 `mymemory`、`mock`、`llm`。
+
+### 3.16 证据列表
+
+```http
+GET /api/lessons/:lessonId/evidence
+```
+
+状态：
+
+- 返回证据卡。
+- 前端兼容数据库原始 shape 和 API 映射 shape。
+
+### 3.17 证据复核
+
+```http
+PATCH /api/lessons/:lessonId/evidence/:evidenceId/review
+```
+
+请求：
+
+```json
+{
+  "status": "accepted",
+  "finalFact": "...",
+  "finalJudgment": "...",
+  "finalSuggestion": "..."
+}
+```
+
+支持状态：
 
 ```text
 pending_review
@@ -347,248 +394,118 @@ rejected
 needs_more_context
 ```
 
-当前状态：
+### 3.18 报告
 
-- 类型已定义。
-- `ReviewEvidenceRequestSchema` 已定义。
-- 新 API 尚未实现证据复核接口。
+```http
+GET /api/lessons/:lessonId/reports
+POST /api/lessons/:lessonId/reports
+PATCH /api/lessons/:lessonId/reports/:reportId
+```
 
-## 5. 已实现 Worker 骨架
+状态：
 
-文件：
+- 报告只使用 accepted 和 edited_and_accepted 证据。
+- 支持 Markdown 生成、预览和编辑保存。
+- R2 文件导出留作后续增强。
+
+## 4. Worker 处理链
+
+入口：
 
 ```text
 apps/worker/src/main.ts
-apps/worker/src/workflows/lesson-workflow.ts
 ```
 
-已实现：
-
-- 独立 Worker 应用入口。
-- 读取共享配置。
-- 使用共享日志。
-- 从数据库认领 queued workflow。
-- 通过 Agent Orchestrator 决定继续、等待上传、等待人工复核或失败。
-- 通过 Pipeline 顺序执行 processor。
-- 每个 processor 的开始、完成、失败会写入 workflow step。
-- 已接入 R2 object existence check、ASR provider 入口、Metrics、Guardrail 和 transcript normalizer Agent。
-
-当前状态：
-
-- 尚未实现 FFmpeg 回退抽音频。
-- 尚未实现 `transcript_segments` 入库 processor。
-- 尚未实现大段分段、事件、证据和报告 repository。
-- 尚未实现重试、超时和并发控制。
-
-## 6. 已实现部署配置
-
-文件：
+支持环境变量：
 
 ```text
-infra/google-cloud/cloudbuild.yaml
-infra/docker/Dockerfile.api
-infra/docker/Dockerfile.web
-infra/docker/Dockerfile
+WORKER_ONCE=true                 只执行一次后退出
+WORKER_CONCURRENCY=3             每轮最多并发认领 3 个 workflow
+WORKER_POLL_INTERVAL_MS=3000     无任务时轮询间隔
+WORKER_ID=worker-name            可选 worker 标识
 ```
 
-当前 Cloud Build 目标：
+processor 顺序：
 
-```yaml
-_API_SERVICE: class-reflect
-_WEB_SERVICE: class-reflect-web
-_WORKER_JOB: class-reflect-worker
+```text
+upload_video
+upload_audio
+probe_media
+submit_asr
+poll_asr
+persist_transcript
+normalize_transcript
+build_sections
+calculate_metrics
+detect_events
+generate_evidence
+validate_evidence
+wait_human_review
+generate_report
+export_report
 ```
 
-部署结果应是：
+关键语义：
 
-| 服务 | 用途 |
+- `build_sections` 完成后停在校订原文确认。
+- 用户确认后从 `calculate_metrics` 继续。
+- `wait_human_review` 用于证据人工复核。
+- worker 常驻轮询时不会因为没有任务而退出。
+
+## 5. 数据库迁移
+
+当前本地/线上至少需要执行：
+
+```bash
+psql "$DATABASE_URL" -f packages/database/migrations/20260730_m1_core_tables.sql
+psql "$DATABASE_URL" -f packages/database/migrations/20260730_workflow_runs.sql
+psql "$DATABASE_URL" -f packages/database/migrations/20260730_section_translations.sql
+psql "$DATABASE_URL" -f packages/database/migrations/20260730_teaching_evidence_agent.sql
+psql "$DATABASE_URL" -f packages/database/migrations/20260730_transcript_agent_projection.sql
+```
+
+Supabase 可在 SQL Editor 中按同样顺序执行。
+
+## 6. 部署口径
+
+Cloud Build 触发器必须选择：
+
+```text
+Cloud Build 配置文件：infra/google-cloud/cloudbuild.yaml
+```
+
+不要使用自动检测根目录 Dockerfile。当前 `cloudbuild.yaml` 会构建并部署：
+
+| 目标 | 名称 |
 | --- | --- |
-| `class-reflect` | NestJS API |
-| `class-reflect-web` | Next.js 前端 |
-| `class-reflect-worker` | 后台任务 Job |
+| API | `class-reflect-api` |
+| Web | `class-reflect-web` |
+| Worker Job | `class-reflect-worker` |
 
-已实现：
-
-- API 镜像构建与部署。
-- Web 镜像构建与部署。
-- Worker Job 部署。
-- `APP_CONFIG_ENV` Secret 注入 API 和 Worker。
-
-注意：
-
-- 当前 API 根路径 `/` 不提供网页，访问 API 服务根路径可能返回 404。
-- 前端网页应打开 `class-reflect-web` 的 Cloud Run URL。
-
-## 7. legacy 中已跑通过、但待迁移的能力
-
-旧实现已归档到：
+生产 Secret 使用 Google Secret Manager：
 
 ```text
-legacy/node-mvp
+APP_CONFIG_ENV:latest
 ```
 
-这些能力曾经跑通过或接近跑通，但当前新 Nest/Next/Worker 架构里还没有迁移完成：
+API 和 Worker 需要同一组后端 Secret；Web 需要 `API_BASE_URL` 或构建期 `NEXT_PUBLIC_API_BASE_URL` 指向 API 服务。
 
-- Supabase 表初始化 SQL。
-- R2 预签名上传地址。
-- R2 对象存在校验。
-- 视频上传完成确认。
-- 音频上传地址。
-- 音频上传完成确认。
-- Worker 从 R2 读取视频。
-- FFmpeg 抽取音频。
-- 阿里云 ASR 文件转写。
-- 带时间点逐字稿写库。
-- 大段课堂记录聚合。
-- 逐字稿/大段记录编辑保存。
-- 按需翻译。
-- LLM 生成候选证据卡。
-- 教师复核证据。
-- Markdown 报告生成。
-- 报告上传到 R2。
+## 7. 当前验收口径
 
-迁移原则：
+本地或线上完成一次真实验收时，应能验证：
 
-- 不把 legacy 文件直接继续扩张。
-- 真实能力应迁入 `apps/api`、`apps/worker`、`packages/database`、`packages/providers`、`packages/agents`、`packages/metrics`、`packages/guardrails`。
-
-## 8. M1 待实现功能
-
-### P0：必须实现，完成基础功能链
-
-1. 数据库接入
-   - 在 `packages/database` 定义 Supabase/PostgreSQL repository。
-   - API 和 Worker 通过 repository 访问数据库。
-   - 不在 controller 或 worker 中重复手写 SQL。
-
-2. 创建课堂真实入库
-   - 已完成：`POST /api/lessons` 写入 `lessons`。
-   - 已完成：`GET /api/lessons` 返回真实课堂列表。
-   - 已完成：`GET /api/lessons/:lessonId` 返回真实详情。
-   - 待补齐：稳定保存课堂类型和复盘目标字段，需要数据库 migration 确认。
-
-3. 视频上传链路
-   - 已完成：`POST /api/lessons/:lessonId/videos/upload-url` 生成 R2 预签名上传地址。
-   - 已完成：前端拖入或选择视频后真实上传到 R2。
-   - 已完成：显示真实上传进度。
-   - 已完成：`POST /api/lessons/videos/:videoId/complete-upload` 确认对象存在并更新视频状态。
-   - 已完成：确认上传完成后创建或唤起 workflow。
-
-4. 独立音频通道
-   - 已完成：前端使用浏览器音频解码能力生成 WAV 音频。
-   - 已完成：视频上传与音频生成/上传并行执行。
-   - 已完成：`POST /api/lessons/videos/:videoId/audio-upload-url` 生成音频上传地址。
-   - 已完成：`POST /api/lessons/videos/:videoId/complete-audio-upload` 确认音频对象。
-   - Worker 在有音频时优先使用音频，无音频时回退 FFmpeg 抽取。
-
-5. Workflow 状态
-   - 已完成：新增或迁移 `workflow_runs`、`workflow_step_runs` repository。
-   - 已完成：`GET /api/lessons/:lessonId/status` 返回真实步骤。
-   - 已完成：前端显示处理进度和失败原因。
-   - 失败后支持重试。
-
-6. Worker 真实处理
-   - 已完成：认领 queued workflow。
-   - 已完成：校验 R2 视频对象。
-   - 已完成：读取已有音频对象并生成短期读取 URL。
-   - 已完成：调用 ASR Provider 入口。
-   - 待补齐：FFmpeg 回退抽音频。
-   - 待补齐：上传临时音频到 R2。
-   - 待补齐：写入 `transcript_segments`。
-   - 聚合并写入 `lesson_sections`。
-
-7. 逐字稿与大段校订
-   - 前端显示时间轴逐字稿。
-   - 前端显示 3-5 分钟大段课堂记录。
-   - 支持直接编辑大段文本。
-   - `PATCH /api/sections/:sectionId` 保存大段编辑。
-   - 保留原始 ASR，不覆盖唯一事实来源。
-
-8. 按需翻译
-   - 已完成：`POST /api/lessons/:lessonId/translate`。
-   - 已完成：前端点击段落触发英译中翻译。
-   - 已完成：翻译结果写回 `transcript_segments.translated_text` 或 `lesson_sections.translated_summary_text`。
-   - 已完成：Provider 支持 `mymemory`、`llm`、`mock`，默认 `mymemory`。
-   - 待补齐：选中片段翻译、全部英文片段批量翻译、译文人工编辑保存。
-
-9. 基础证据生成
-   - `POST /api/lessons/:lessonId/analyze`。
-   - 基于逐字稿和大段记录生成候选证据卡。
-   - 每张证据卡必须有来源时间点和原文。
-   - 至少支持三类证据：语速/连续讲授、提问等待、自问自答或反馈。
-
-10. 人工复核
-    - `PATCH /api/evidence-cards/:cardId/review`。
-    - 支持接受、修改后接受、驳回、需要更多上下文。
-    - 保存教师修改内容和备注。
-
-11. 报告生成
-    - `POST /api/lessons/:lessonId/reports`。
-    - 报告只使用 `accepted` 和 `edited_and_accepted` 证据。
-    - 支持 Markdown 预览。
-    - 可选上传导出文件到 R2。
-
-### P1：最值得展示的创新功能
-
-- 课堂节奏曲线。
-- 结尾加速提示。
-- 齐答与个体回答区分。
-- 笼统理解检查。
-- 问题、等待、回答、反馈链。
-- 信息密度提示。
-- 可分析能力矩阵。
-- 不确定性提示。
-- 证据卡一键跳转对应时间点。
-
-### P2：有余力再做
-
-- 直播聊天记录 CSV 导入。
-- 课件页关联。
-- 课堂画面截图作为人工辅助证据。
-- 更细课堂结构。
-- PDF 导出。
-- 多次复盘对比。
-
-### 暂不做
-
-- 登录、多用户、多租户。
-- 学校组织、权限、套餐和计费。
-- 视频 OCR。
-- 学生注意力和情绪识别。
-- 自动给教师评分。
-- 教师排名。
-- 完整 RAG。
-- 知识图谱。
-- 实时直播分析。
-
-## 9. 建议的接口补齐顺序
-
-优先顺序应按一条功能链推进：
-
-```text
-创建课堂
-→ 生成视频上传地址
-→ 前端上传 R2
-→ 完成上传并创建 workflow
-→ Worker 转写并写库
-→ 前端展示大段课堂记录
-→ 保存校订
-→ 生成证据
-→ 教师复核
-→ 生成报告
-```
-
-不要先做分散功能。M1 的价值是跑通一条真实、可恢复、可追溯的链路。
-
-## 10. 验收口径
-
-M1 完成时应能验证：
-
-- 更换一个真实课堂视频后，系统重新生成对应逐字稿。
-- 上传和处理状态不是写死内容。
-- 失败时显示失败步骤和原因。
-- 逐字稿有时间点。
-- 教师可以编辑大段课堂记录。
-- 证据卡能回到时间点和原文。
-- 报告只包含教师确认内容。
-- 前端、API、Worker、数据库、R2、ASR 至少真实连通一次。
+- 创建课堂后必须选择课堂类型。
+- 视频能上传到 R2，并能在课堂详情页播放。
+- 浏览器能生成音频并上传。
+- Worker 能认领 workflow，不会因为无任务自动退出。
+- 处理卡片显示当前大阶段的小步骤，状态及时更新。
+- “检查媒体”实际耗时可通过步骤 startedAt / finishedAt 查看。
+- ASR 结果写入逐字稿。
+- 逐字稿 Agent 生成有意义的片段标题，不出现“课堂片段 17”。
+- 视频下方显示分段时间轴，拖到对应位置显示对应文稿。
+- 校订原文阶段会停住，用户确认后才继续后续分析。
+- 证据卡能跳转视频时间点。
+- 接受或驳回证据后，证据卡从待处理列表消失。
+- 从人工复核阶段重试时，已处理证据恢复为待处理。
+- 报告只包含教师接受或修改后接受的证据。
+- 前端、API、Worker、Supabase、R2、ASR 至少真实连通一次。

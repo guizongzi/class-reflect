@@ -7,9 +7,10 @@ import {
   saveClassroomEvents,
   saveClassroomMetrics,
   saveLessonSections,
-  saveTeachingEvidenceCards
+  saveTeachingEvidenceCards,
+  updateTranscriptSegmentsProjection
 } from "@class-reflect/database";
-import { buildLessonSections, detectClassroomEvents } from "@class-reflect/domain";
+import { detectClassroomEvents } from "@class-reflect/domain";
 import { assertEvidenceHasSource, validateTeachingEvidenceCard } from "@class-reflect/guardrails";
 import { calculateDeterministicClassroomMetrics } from "@class-reflect/metrics";
 import { capabilityMatrixByLessonFormat } from "@class-reflect/shared-types";
@@ -17,12 +18,24 @@ import type { ProcessorResult, WorkflowProcessor } from "./types";
 
 export const normalizeTranscriptProcessor: WorkflowProcessor = {
   stepKey: "normalize_transcript",
-  async run(): Promise<ProcessorResult> {
-    const result = runTranscriptNormalizer([]);
+  async run(context): Promise<ProcessorResult> {
+    const transcriptSegments = await listTranscriptSegments({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId
+    });
+    if (!transcriptSegments.length) throw new Error("还没有可用于整理的逐字稿");
+
+    const result = runTranscriptNormalizer(transcriptSegments);
+    const normalizedSegments = await updateTranscriptSegmentsProjection({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId,
+      segments: result.output.normalizedSegments
+    });
     return {
       output: {
         promptVersion: result.promptVersion,
-        normalizedSegmentCount: result.output.length
+        normalizedSegmentCount: normalizedSegments.length,
+        analysisProjection: result.output.analysisProjection
       },
       warnings: result.warnings
     };
@@ -36,21 +49,23 @@ export const buildSectionsProcessor: WorkflowProcessor = {
       lessonId: context.workflow.lessonId,
       videoId: context.workflow.videoId
     });
-    if (!transcriptSegments.length) throw new Error("还没有可用于生成大段课堂记录的逐字稿");
+    if (!transcriptSegments.length) throw new Error("还没有可用于生成展示逐字稿的句子");
 
-    const sections = buildLessonSections(transcriptSegments);
+    const result = runTranscriptNormalizer(transcriptSegments);
     const savedSections = await saveLessonSections({
       lessonId: context.workflow.lessonId,
       videoId: context.workflow.videoId,
-      sections
+      sections: result.output.displaySections
     });
-
     return {
       output: {
         sectionCount: savedSections.length,
+        sentenceCount: transcriptSegments.length,
         firstSectionId: savedSections[0]?.id || null,
-        lastSectionId: savedSections[savedSections.length - 1]?.id || null
-      }
+        lastSectionId: savedSections[savedSections.length - 1]?.id || null,
+        mode: "display_projection"
+      },
+      warnings: result.warnings
     };
   }
 };

@@ -167,6 +167,7 @@ export type LessonSection = {
   summaryText: string;
   confidenceLabel: string;
   tags: string[];
+  transcriptSegmentIds?: string[];
 };
 
 export type ClassroomMetric = {
@@ -200,10 +201,27 @@ export type Report = {
 export type TeachingEvidenceCard = {
   id: string;
   category: EvidenceCategory;
+  sentiment?: "positive" | "neutral" | "negative";
   title: string;
   fact: string;
   interpretation: string;
   suggestion: string;
+  analysis?: {
+    evidenceCategory: EvidenceCategory;
+    utteranceType?: string;
+    includedInQuestionCount?: boolean;
+    includedInInteractionCount?: boolean;
+    evidenceStrength?: EvidenceStrength;
+    internalReason?: string;
+    suggestionDirection?: string;
+  };
+  teacherView?: {
+    title: string;
+    observation: string;
+    teachingMeaning?: string;
+    nextStep?: string;
+    exampleWording?: string;
+  };
   startMs: number;
   endMs: number;
   quote: string;

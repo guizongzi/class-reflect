@@ -10,6 +10,7 @@ import {
   type LearningCheckLevel,
   type LearningCheckType,
   type LessonFormat,
+  type LessonSection,
   type ResponsePattern,
   type TeachingEvidenceCard,
   type TranscriptSegment
@@ -94,10 +95,37 @@ export type WorkflowAgentDecision = {
   warnings: string[];
 };
 
-export function runTranscriptNormalizer<T>(segments: T[]): AgentResult<T[]> {
+export type TranscriptNormalizerOutput = {
+  normalizedSegments: TranscriptSegment[];
+  displaySections: LessonSection[];
+  analysisProjection: {
+    sentenceCount: number;
+    teacherSentenceCount: number;
+    studentSentenceCount: number;
+    lowConfidenceSentenceCount: number;
+    flags: string[];
+  };
+};
+
+export function runTranscriptNormalizer(segments: TranscriptSegment[]): AgentResult<TranscriptNormalizerOutput> {
+  const sortedSegments = [...segments].sort((a, b) => a.startMs - b.startMs);
+  const speakerProfiles = buildSpeakerProfiles(sortedSegments);
+  const normalizedSegments = sortedSegments.map((segment, index) => normalizeTranscriptSegment(segment, index, speakerProfiles));
+  const displaySections = buildDisplayTranscriptSections(normalizedSegments);
+  const flags = [...new Set(normalizedSegments.flatMap((segment) => inferTranscriptFlags(segment)))];
   return {
-    output: segments,
-    promptVersion: "transcript-normalizer.v0",
+    output: {
+      normalizedSegments,
+      displaySections,
+      analysisProjection: {
+        sentenceCount: normalizedSegments.length,
+        teacherSentenceCount: normalizedSegments.filter(isTeacherLikeSegment).length,
+        studentSentenceCount: normalizedSegments.filter((segment) => /学生|同学|全班|齐答/.test(segment.speakerLabel || "")).length,
+        lowConfidenceSentenceCount: normalizedSegments.filter((segment) => (segment.confidence ?? 1) < 0.65).length,
+        flags
+      }
+    },
+    promptVersion: "transcript-agent.rule-based.v0.1",
     warnings: []
   };
 }
@@ -171,6 +199,258 @@ export function runTeachingEvidenceAgent(input: TeachingEvidenceInput): AgentRes
       .filter((item) => item.reason === "not_applicable_to_lesson_format" || item.reason === "capability_not_supported")
       .map((item) => `${item.category}:${item.reason}`)
   };
+}
+
+type SpeakerProfile = {
+  rawLabel: string;
+  normalizedLabel: string;
+  role: "teacher" | "student" | "students" | "unknown";
+  score: number;
+};
+
+function buildSpeakerProfiles(segments: TranscriptSegment[]) {
+  const grouped = new Map<string, { label: string; text: string; durationMs: number; count: number; score: number }>();
+  for (const segment of segments) {
+    const label = segment.speakerLabel || "未知";
+    const current = grouped.get(label) || { label, text: "", durationMs: 0, count: 0, score: 0 };
+    current.text = `${current.text} ${segment.text || ""}`.trim();
+    current.durationMs += Math.max(segment.endMs - segment.startMs, 0);
+    current.count += 1;
+    current.score += scoreTeacherLikelihood(segment.text || "");
+    grouped.set(label, current);
+  }
+  const profiles = [...grouped.values()].sort((a, b) => (
+    (b.score + b.durationMs / 60000 + b.count * 0.1) - (a.score + a.durationMs / 60000 + a.count * 0.1)
+  ));
+  const teacherRawLabel = profiles[0]?.label || "未知";
+  const studentLabels = new Map<string, string>();
+  let studentIndex = 0;
+  const result = new Map<string, SpeakerProfile>();
+
+  for (const profile of profiles) {
+    const sample = profile.text;
+    if (profile.label === teacherRawLabel || /教师|老师|teacher/i.test(profile.label)) {
+      result.set(profile.label, { rawLabel: profile.label, normalizedLabel: "教师", role: "teacher", score: profile.score });
+      continue;
+    }
+    if (/全班|齐答|大家|同学们/.test(profile.label) || isLikelyChoralText(sample)) {
+      result.set(profile.label, { rawLabel: profile.label, normalizedLabel: "全班", role: "students", score: profile.score });
+      continue;
+    }
+    if (/未知/.test(profile.label) && profile.score < 2) {
+      result.set(profile.label, { rawLabel: profile.label, normalizedLabel: "未知", role: "unknown", score: profile.score });
+      continue;
+    }
+    const label = studentLabels.get(profile.label) || `学生${String.fromCharCode(65 + studentIndex)}`;
+    studentLabels.set(profile.label, label);
+    studentIndex += 1;
+    result.set(profile.label, { rawLabel: profile.label, normalizedLabel: label, role: "student", score: profile.score });
+  }
+  return result;
+}
+
+function normalizeTranscriptSegment(
+  segment: TranscriptSegment,
+  index: number,
+  profiles: Map<string, SpeakerProfile>
+): TranscriptSegment {
+  const rawLabel = segment.speakerLabel || "未知";
+  const profile = profiles.get(rawLabel);
+  const normalizedText = normalizeTranscriptText(segment.text || "");
+  return {
+    ...segment,
+    speakerLabel: profile?.normalizedLabel || rawLabel,
+    text: normalizedText,
+    confidence: segment.confidence ?? inferNormalizationConfidence(segment, profile, index)
+  };
+}
+
+function buildDisplayTranscriptSections(segments: TranscriptSegment[]): LessonSection[] {
+  if (!segments.length) return [];
+  const sections: LessonSection[] = [];
+  let current: TranscriptSegment[] = [];
+
+  for (const segment of segments) {
+    const previous = current[current.length - 1];
+    const currentTextLength = countDisplayCharacters(current);
+    const nextTextLength = currentTextLength + displayTextForSegment(segment).length;
+    const gapMs = previous ? Math.max(segment.startMs - previous.endMs, 0) : 0;
+    const shouldClose = current.length > 0 && (
+      nextTextLength > 500 ||
+      gapMs >= 15_000 ||
+      speakerTurnStartsNewBlock(previous, segment, currentTextLength) ||
+      activityBoundary(previous.text, segment.text)
+    );
+
+    if (shouldClose) {
+      sections.push(makeTranscriptSection(current, sections.length));
+      current = [];
+    }
+    current.push(segment);
+  }
+  if (current.length) sections.push(makeTranscriptSection(current, sections.length));
+  return sections;
+}
+
+function makeTranscriptSection(segments: TranscriptSegment[], index: number): LessonSection {
+  const startMs = segments[0]?.startMs ?? 0;
+  const endMs = segments[segments.length - 1]?.endMs ?? startMs;
+  const text = segments.map((segment) => (
+    `${msToClock(segment.startMs)}-${msToClock(segment.endMs)} ${segment.speakerLabel || "未知"}：${displayTextForSegment(segment)}`
+  )).join("\n");
+  return {
+    startMs,
+    endMs,
+    title: inferTranscriptSectionTitle(segments, index),
+    summaryText: text,
+    confidenceLabel: segments.some((segment) => (segment.confidence ?? 1) < 0.65) ? "含低置信句" : "机器整理",
+    tags: inferTranscriptSectionTags(segments),
+    transcriptSegmentIds: segments.map((segment) => segment.id)
+  };
+}
+
+function normalizeTranscriptText(text: string) {
+  const trimmed = text.replace(/\s+/g, "").trim();
+  if (!trimmed) return "";
+  if (/[。！？!?]$/.test(trimmed)) return trimmed;
+  if (/吗|呢|么|什么|为什么|怎么|哪|几|是不是|对不对$/.test(trimmed)) return `${trimmed}？`;
+  return `${trimmed}。`;
+}
+
+function displayTextForSegment(segment: TranscriptSegment) {
+  return (segment.text || "")
+    .replace(/^(嗯|啊|呃|额|那个|这个)[，,、\s]*/g, "")
+    .replace(/([，,、])?(这个|那个)\2([，,、])/g, "$2$3")
+    .trim();
+}
+
+function countDisplayCharacters(segments: TranscriptSegment[]) {
+  return segments.reduce((sum, segment) => sum + displayTextForSegment(segment).length, 0);
+}
+
+function speakerTurnStartsNewBlock(previous: TranscriptSegment, segment: TranscriptSegment, currentTextLength: number) {
+  if ((previous.speakerLabel || "") === (segment.speakerLabel || "")) return false;
+  if (currentTextLength < 120) return false;
+  return isTeacherLikeSegment(previous) !== isTeacherLikeSegment(segment);
+}
+
+function activityBoundary(previousText = "", currentText = "") {
+  const value = `${previousText} ${currentText}`;
+  return /接下来|下面|现在我们|开始练习|小组讨论|总结一下|回顾一下|请大家|谁来说|为什么|再来看/.test(value);
+}
+
+function inferTranscriptSectionTitle(segments: TranscriptSegment[], index: number) {
+  const text = normalizeTitleText(segments.map((segment) => segment.text).join(""));
+  const keyword = inferTranscriptKeyword(text);
+  const activity = inferTranscriptActivityLabel(text, index);
+  return keyword ? `${activity}：${keyword}` : activity;
+}
+
+function inferTranscriptActivityLabel(text: string, index: number) {
+  if (/上节课|复习|回顾|今天.*(学习|来看|研究)|导入|先来看/.test(text)) return "导入与复习";
+  if (/概念|意义|性质|定义|表示|叫作|是什么|怎么理解/.test(text)) return "概念讲解";
+  if (/为什么|怎么|谁来说|谁能|请.*回答|想一想|哪.*相等|是不是|对不对/.test(text)) return "问题探究";
+  if (/因为|所以|由此|可以得到|推出|说明|证明|理由|依据/.test(text)) return "推理说明";
+  if (/方法|步骤|规律|可以用|一般|归纳|总结出|以后遇到/.test(text)) return "方法归纳";
+  if (/练习|判断|算一算|写一写|完成|试一试|做一做|例题|题目/.test(text)) return "练习讲评";
+  if (/同学们|请大家|打开|拿出|看屏幕|小组|讨论|坐好|安静/.test(text)) return "课堂组织";
+  if (/总结|作业|下节课|今天学|回家|课后/.test(text)) return "总结与作业";
+  return index === 0 ? "课堂导入" : "课堂推进";
+}
+
+function inferTranscriptKeyword(text: string) {
+  const patterns = [
+    /([一二三四五六七八九十\d]+)\s*[、.．]?\s*([^。！？?，,；;]{2,16})/,
+    /(分数的意义|分数单位|对数函数|函数图象|角平分线|三角形|等腰三角形|面积|方程|比例|小数|整数|百分数)/,
+    /(图象和性质|图中的[^。！？?，,；;]{2,14}|这个方法|这种方法|这道题|这个问题|这两个角|这条线|这个答案)/,
+    /(先[^。！？?，,；;]{2,14}|接下来[^。！？?，,；;]{2,14}|下面[^。！？?，,；;]{2,14})/
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const value = normalizeTitleText(match?.[2] || match?.[1] || "");
+    if (isMeaningfulTitleKeyword(value)) return trimTitleKeyword(value);
+  }
+  const phrase = text
+    .split(/[。！？?，,；;\n]/)
+    .map((item) => normalizeTitleText(item))
+    .find(isMeaningfulTitleKeyword);
+  return phrase ? trimTitleKeyword(phrase) : "";
+}
+
+function normalizeTitleText(text: string) {
+  return text
+    .replace(/\s+/g, "")
+    .replace(/^(嗯|啊|呃|额|那个|这个|那么|那|好|哎)[，,、。]*/g, "")
+    .trim();
+}
+
+function isMeaningfulTitleKeyword(value: string) {
+  if (value.length < 2) return false;
+  if (/^(老师|教师|学生|同学们|我们|大家|然后|接下来|首先|那么|那|这个|那个|就是|可以|看看|来说)$/.test(value)) return false;
+  return /[\u4e00-\u9fa5A-Za-z0-9]/.test(value);
+}
+
+function trimTitleKeyword(value: string) {
+  return value
+    .replace(/^(我们|大家|同学们|先|再|来|看一下|来看|说一下|想一想|请你?)/, "")
+    .replace(/[。！？?，,；;：:、]+$/g, "")
+    .slice(0, 16);
+}
+
+function inferTranscriptSectionTags(segments: TranscriptSegment[]) {
+  const text = segments.map((segment) => segment.text).join("");
+  const tags: string[] = [];
+  if (/[？?]|为什么|谁来说|请.*回答/.test(text)) tags.push("含提问");
+  if (/学生|全班/.test(segments.map((segment) => segment.speakerLabel).join(""))) tags.push("含学生回应");
+  if (/练习|判断|算一算|写一写/.test(text)) tags.push("练习");
+  if (/总结|回顾/.test(text)) tags.push("总结");
+  return tags;
+}
+
+function inferTranscriptFlags(segment: TranscriptSegment) {
+  const flags: string[] = [];
+  const text = segment.text || "";
+  if (/嗯|呃|额|那个|这个/.test(text)) flags.push("filler_words");
+  if (/([一-龥]{1,4})[，,、]?\1/.test(text)) flags.push("repetition");
+  if (/[？?]|为什么|怎么|什么|哪|几|是不是|对不对/.test(text)) flags.push("question");
+  if ((segment.confidence ?? 1) < 0.65) flags.push("low_confidence");
+  if ((segment.endMs - segment.startMs) > 20_000 && text.length < 8) flags.push("timing_uncertain");
+  return flags;
+}
+
+function inferNormalizationConfidence(segment: TranscriptSegment, profile: SpeakerProfile | undefined, index: number) {
+  let confidence = 0.78;
+  if (!profile || profile.role === "unknown") confidence -= 0.12;
+  if (index === 0 && isTeacherLikeSegment(segment)) confidence += 0.08;
+  if ((segment.text || "").length < 3) confidence -= 0.08;
+  return Math.max(0.45, Math.min(0.95, confidence));
+}
+
+function scoreTeacherLikelihood(text: string) {
+  let score = 0;
+  if (/请大家|我们来看|想一想|回答|举手|翻到|开始|停|安静/.test(text)) score += 2;
+  if (/为什么|怎么|什么|哪|几|是不是|对不对/.test(text)) score += 1.5;
+  if (/很好|不错|对了|再想想|哪里不对|总结/.test(text)) score += 1.5;
+  if (/同学们|孩子们|老师/.test(text)) score += 1;
+  return score;
+}
+
+function isLikelyChoralText(text: string) {
+  const compact = text.replace(/\s+/g, "");
+  return /^(懂了|会了|明白了|对|是|不是|好|可以)[。！!？?]?$/.test(compact);
+}
+
+function isTeacherLikeSegment(segment: TranscriptSegment) {
+  const label = segment.speakerLabel || "";
+  if (/学生|全班|齐答/.test(label)) return false;
+  return /教师|老师|teacher/i.test(label) || scoreTeacherLikelihood(segment.text || "") >= 1.5;
+}
+
+function msToClock(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
 
 export function runWorkflowAgent(snapshot: WorkflowAgentSnapshot): AgentResult<WorkflowAgentDecision> {
@@ -258,12 +538,29 @@ function buildOralConfirmationCard(input: TeachingEvidenceInput, segments: Trans
     category: "learning_check_level",
     title: "课堂检查采用口头确认",
     fact: `教师在${formatTime(question.startMs)}进行口头确认，随后可听见学生回应。`,
-    interpretation: "该检查属于一级口头确认，可以说明课堂中出现了口头回应，但提供的理解证据较弱，不能据此判断每名学生都已理解。",
-    suggestion: "可在口头确认后增加一个具体问题，请学生说明依据，或设置一道相近任务检查能否独立应用。",
+    interpretation: `教师用“${trimQuote(question.text)}”快速确认学生回应，随后听到了“${trimQuote(response.text)}”一类短答。这个环节能看到课堂有即时回应，但还不容易看出学生具体是怎样理解的。`,
+    suggestion: `在这类口头确认后，可以接一句更具体的问题，例如：“谁能说说刚才这一步为什么这样做？”这样可以继续观察学生是否能说出理由。`,
+    sentiment: "neutral",
     segments: [question, response],
     confidence: "medium",
     uncertaintyNote: "集体或短促回应无法确认每名学生的实际理解情况。",
-    learningCheck: learningCheck(1, "oral_confirmation", inferResponsePattern(response, input.lesson_format), "very_weak", "齐答或短促回应只能证明出现了口头回应，不能证明个体理解。")
+    learningCheck: learningCheck(1, "oral_confirmation", inferResponsePattern(response, input.lesson_format), "very_weak", "齐答或短促回应只能证明出现了口头回应，不能证明个体理解。"),
+    analysis: {
+      evidenceCategory: "learning_check_level",
+      utteranceType: "oral_confirmation",
+      includedInQuestionCount: true,
+      includedInInteractionCount: true,
+      evidenceStrength: "very_weak",
+      internalReason: "口头确认与短答可作为互动信号，但不能作为个体理解证据。",
+      suggestionDirection: "extend_oral_confirmation_to_reasoning"
+    },
+    teacherView: {
+      title: "口头确认后有学生回应",
+      observation: `教师用“${trimQuote(question.text)}”确认学生是否跟上，随后听到了学生回应。`,
+      teachingMeaning: "这个片段能看到学生有即时反馈；如果想进一步了解学生是否真的理解，可以让学生说出一个理由或步骤。",
+      nextStep: "下次遇到类似确认环节时，可以在学生回应后追问一个具体依据。",
+      exampleWording: "“谁能说说刚才这一步为什么这样做？”"
+    }
   });
 }
 
@@ -283,12 +580,29 @@ function buildTeacherSelfAnswerCard(input: TeachingEvidenceInput, segments: Tran
     category: "response_pattern",
     title: "提问后由教师自行解释",
     fact: `教师在${formatTime(question.startMs)}提出问题后，约${waitSeconds}秒开始自行解释，当前片段中未识别到学生回答。`,
-    interpretation: "该片段属于教师提问后自行回答。它可能是讲解中的修辞性问题，也可能没有形成清晰的学生作答窗口。",
-    suggestion: "如果该问题用于检查理解，可明确邀请学生回答并适当延长等待时间；如果用于讲解组织，可直接用陈述句衔接解释。",
+    interpretation: `教师提出“${trimQuote(question.text)}”后，很快接着进行了说明。这个衔接让讲解保持连续，但如果这里原本想听学生思路，学生可组织回答的时间比较短。`,
+    suggestion: `如果这个问题是想了解学生想法，可以先明确邀请一名学生回答，并留出几秒钟；如果只是为了引出讲解，也可以把它改成陈述句，让学生更清楚这里不需要作答。`,
+    sentiment: "negative",
     segments: [question, answer],
     confidence: "medium",
     uncertaintyNote: "仅根据逐字稿无法完全确定该问题是理解检查还是修辞性组织。",
-    learningCheck: learningCheck(inferLearningCheckLevel(question.text), inferLearningCheckType(question.text), "teacher_self_answer", "very_weak", "问题由教师自行回答，不能作为学生理解证据。")
+    learningCheck: learningCheck(inferLearningCheckLevel(question.text), inferLearningCheckType(question.text), "teacher_self_answer", "very_weak", "问题由教师自行回答，不能作为学生理解证据。"),
+    analysis: {
+      evidenceCategory: "response_pattern",
+      utteranceType: "teacher_question_followed_by_teacher_answer",
+      includedInQuestionCount: true,
+      includedInInteractionCount: false,
+      evidenceStrength: "very_weak",
+      internalReason: "教师提问后由教师紧接解释，未形成可观察学生回答。",
+      suggestionDirection: "clarify_question_intent_or_wait_for_response"
+    },
+    teacherView: {
+      title: "提问后很快进入教师说明",
+      observation: `教师提出“${trimQuote(question.text)}”后，约${waitSeconds}秒开始继续说明。`,
+      teachingMeaning: "这个处理能让讲解节奏比较连贯；如果当时希望了解学生思路，可以给学生更明确的回答机会。",
+      nextStep: "可以根据目的选择两种说法：想让学生回答时先点名或邀请举手；只是过渡讲解时直接用陈述句衔接。",
+      exampleWording: "“先请一位同学说说你的判断依据。”"
+    }
   });
 }
 
@@ -299,11 +613,28 @@ function buildClassroomManagementCard(input: TeachingEvidenceInput, segments: Tr
     category: "classroom_management",
     title: "识别到课堂管理语言",
     fact: `当前片段中多次出现课堂组织或管理语言，如“${trimQuote(managementSegments[0].text)}”。`,
-    interpretation: "这些表达主要用于维持秩序、安排任务或切换流程，不应直接计为学科提问或理解检查。",
-    suggestion: "统计提问和互动时，可将管理语言与具有知识、理解、推理或应用目标的问题分开记录。",
+    interpretation: buildManagementObservation(managementSegments),
+    suggestion: buildManagementSuggestion(managementSegments),
+    sentiment: "neutral",
     segments: managementSegments,
     confidence: "high",
-    uncertaintyNote: null
+    uncertaintyNote: null,
+    analysis: {
+      evidenceCategory: "classroom_management",
+      utteranceType: "classroom_management",
+      includedInQuestionCount: false,
+      includedInInteractionCount: false,
+      evidenceStrength: "medium",
+      internalReason: "该表达用于维持秩序、安排任务或切换流程。",
+      suggestionDirection: "connect_transition_to_learning_task"
+    },
+    teacherView: {
+      title: "课堂组织与任务切换",
+      observation: buildManagementObservation(managementSegments),
+      teachingMeaning: "这个片段显示教师能较快组织学生进入下一环节；如果希望任务切换同时承接学习目标，可以在操作指令后补一句关注点。",
+      nextStep: buildManagementSuggestion(managementSegments),
+      exampleWording: buildManagementExample(managementSegments)
+    }
   });
 }
 
@@ -315,11 +646,21 @@ function buildTechnicalIssueCard(input: TeachingEvidenceInput, segments: Transcr
     category: "technical_issue",
     title: "出现直播技术确认",
     fact: `教师在${formatTime(segment.startMs)}进行了音视频或连麦相关确认。`,
-    interpretation: "该片段更接近直播技术或流程确认，不应统计为学科提问，也不能据此判断学习参与情况。",
-    suggestion: "分析直播互动时，可单独标记技术确认，并结合可听见的连麦回答再判断互动节奏。",
+    interpretation: `教师用“${trimQuote(segment.text)}”确认直播中的听看或连麦状态，先保障学生能够进入后续学习。`,
+    suggestion: "技术确认结束后，可以马上接一个简短学习任务，例如请学生在聊天区或口头说出刚才例题的关键条件，帮助课堂从设备确认平稳转回学习内容。",
+    sentiment: "neutral",
     segments: [segment],
     confidence: "high",
-    uncertaintyNote: null
+    uncertaintyNote: null,
+    analysis: {
+      evidenceCategory: "technical_issue",
+      utteranceType: "technical_check",
+      includedInQuestionCount: false,
+      includedInInteractionCount: false,
+      evidenceStrength: "weak",
+      internalReason: "技术确认不作为学科提问或学习互动证据。",
+      suggestionDirection: "return_from_technical_check_to_learning_task"
+    }
   });
 }
 
@@ -334,6 +675,7 @@ function buildErrorAnalysisCard(input: TeachingEvidenceInput, segments: Transcri
       ? "该片段不仅给出答案，还指向错误产生的原因，符合试卷讲评或考试训练中的关键分析重点。"
       : "该片段把学生可能出错的位置作为讲解对象，有助于教师复盘理解障碍。",
     suggestion: "可进一步让学生说明错误发生在哪一步，或提供一道变式题检查是否能迁移修正。",
+    sentiment: "positive",
     segments: [segment],
     confidence: "high",
     uncertaintyNote: null
@@ -347,13 +689,28 @@ function buildMethodGeneralizationCard(input: TeachingEvidenceInput, segments: T
     category: "method_generalization",
     title: "出现方法或题型归纳",
     fact: `教师在${formatTime(segment.startMs)}提到方法、步骤、题型或策略。`,
-    interpretation: context === "review_lesson" || context === "test_paper_review" || context === "exam_practice"
-      ? "在复习、讲评或考试训练场景中，方法归纳比单纯统计提问数量更能反映该片段的教学重点。"
-      : "该片段尝试把具体内容上升为可复用的方法或步骤。",
-    suggestion: "可让学生用该方法处理一个相近任务，并说明选择该方法的依据。",
+    interpretation: buildMethodObservation(segment, context),
+    suggestion: buildMethodSuggestion(segment),
+    sentiment: "positive",
     segments: [segment],
     confidence: "medium",
-    uncertaintyNote: "仅凭单个片段无法判断整节课的方法归纳是否充分。"
+    uncertaintyNote: "仅凭单个片段无法判断整节课的方法归纳是否充分。",
+    analysis: {
+      evidenceCategory: "method_generalization",
+      utteranceType: "method_generalization",
+      includedInQuestionCount: false,
+      includedInInteractionCount: false,
+      evidenceStrength: "medium",
+      internalReason: "该片段将具体内容归纳为方法、步骤、题型或策略。",
+      suggestionDirection: "ask_students_to_apply_and_explain_method"
+    },
+    teacherView: {
+      title: "从例题中归纳方法",
+      observation: buildMethodObservation(segment, context),
+      teachingMeaning: "这个片段已经开始帮助学生从一道题中提炼可复用的做法。接下来如果能让学生自己选择步骤并说明理由，就能看到迁移使用的证据。",
+      nextStep: buildMethodSuggestion(segment),
+      exampleWording: buildMethodExample(segment)
+    }
   });
 }
 
@@ -366,6 +723,7 @@ function buildKnowledgeConnectionCard(input: TeachingEvidenceInput, segments: Tr
     fact: `教师在${formatTime(segment.startMs)}把知识点、方法或任务放在一起比较或连接。`,
     interpretation: "该做法有助于学生看到知识之间的关系，而不是只记忆孤立结论。",
     suggestion: "可用一张表格、框架图或综合任务继续检查学生是否能选择合适方法。",
+    sentiment: "positive",
     segments: [segment],
     confidence: "medium",
     uncertaintyNote: null
@@ -381,6 +739,7 @@ function buildVariationPracticeCard(input: TeachingEvidenceInput, segments: Tran
     fact: `教师在${formatTime(segment.startMs)}布置或提示了相近任务、条件变化或迁移应用。`,
     interpretation: "这类任务比口头确认能提供更强的学习检查证据，尤其适合讲评、复习和训练场景。",
     suggestion: "可记录学生完成情况和解释过程，作为后续报告中更可靠的理解证据。",
+    sentiment: "positive",
     segments: [segment],
     confidence: "high",
     uncertaintyNote: null,
@@ -398,6 +757,7 @@ function buildSelfCheckCard(input: TeachingEvidenceInput, segments: TranscriptSe
     fact: `教师在${formatTime(segment.startMs)}给出暂停思考、自测或独立完成任务的提示。`,
     interpretation: "录播课程无法观察实时学生回应，自测提示可以为学习者提供主动加工和检查理解的机会。",
     suggestion: "可在提示后给出明确答案核对或步骤示范，帮助学习者完成自我反馈闭环。",
+    sentiment: "positive",
     segments: [segment],
     confidence: "high",
     uncertaintyNote: null,
@@ -414,10 +774,58 @@ function buildLessonSummaryCard(input: TeachingEvidenceInput, segments: Transcri
     fact: `教师在${formatTime(segment.startMs)}进行了回顾、归纳或结束性总结。`,
     interpretation: "总结语言有助于收束课堂内容，但仍需结合是否包含关键方法、易错点或任务反馈来判断其证据强度。",
     suggestion: "可在总结中明确列出本节课的关键方法和一个自检问题，帮助学生对照检查。",
+    sentiment: "neutral",
     segments: [segment],
     confidence: "medium",
     uncertaintyNote: null
   });
+}
+
+function buildManagementObservation(segments: TranscriptSegment[]) {
+  const quotes = segments.slice(0, 3).map((segment) => `“${trimQuote(segment.text)}”`).join("、");
+  return `在这一片段中，教师通过${quotes}等指令组织课堂秩序、安排任务或推动环节切换。`;
+}
+
+function buildManagementSuggestion(segments: TranscriptSegment[]) {
+  const anchor = trimQuote(segments[0]?.text || "进入下一环节");
+  return `在“${anchor}”这类操作指令后，可以补充一个学习关注点，让学生带着明确任务进入下一步。`;
+}
+
+function buildManagementExample(segments: TranscriptSegment[]) {
+  const text = segments.map((segment) => segment.text).join(" ");
+  if (/翻到|第/.test(text)) return "“先看这一题和刚才例题的条件有什么不同，再开始讨论。”";
+  if (/小组|讨论/.test(text)) return "“小组讨论时先确定你们准备用哪一步，再说出选择理由。”";
+  return "“开始之前，先想一想刚才的方法在这里要用到哪一步。”";
+}
+
+function buildMethodObservation(segment: TranscriptSegment, context: InstructionalContext) {
+  const quote = trimQuote(segment.text);
+  if (context === "review_lesson" || context === "test_paper_review" || context === "exam_practice") {
+    return `教师在“${quote}”这一句中，把当前题目或讲评内容连接到可复用的方法、步骤或策略。`;
+  }
+  return `教师在“${quote}”这一句中，开始把具体内容提炼成学生后续可以继续使用的做法。`;
+}
+
+function buildMethodSuggestion(segment: TranscriptSegment) {
+  const method = inferMethodPhrase(segment.text);
+  if (method) {
+    return `讲完“${method}”后，可以安排一道条件略有变化的练习，请学生先说准备采用哪一步、为什么这样选，再开始作答。`;
+  }
+  return "在这个方法讲解后，可以安排一道条件略有变化的练习，并请学生先说出准备采用的步骤和理由，再开始作答。";
+}
+
+function buildMethodExample(segment: TranscriptSegment) {
+  const method = inferMethodPhrase(segment.text);
+  if (method) return `“这道题还能直接用${method}吗？你准备先做哪一步，为什么？”`;
+  return "“这道题和刚才例题相比，条件有什么变化？你准备先做哪一步，为什么？”";
+}
+
+function inferMethodPhrase(text: string) {
+  const compact = text.replace(/\s+/g, "");
+  const match = compact.match(/(?:通过|用|使用|采用|按照|根据)([^，。！？!?]{2,24})(?:来|去|做|解决|判断|求|证明)/);
+  if (match?.[1]) return match[1];
+  const keyword = compact.match(/(截长补短|边角边|先[^，。！？!?]{2,18}再[^，。！？!?]{2,18}|通分|约分|辅助线|分类讨论)/);
+  return keyword?.[1] || null;
 }
 
 function evidenceCard(input: TeachingEvidenceInput, values: {
@@ -426,16 +834,20 @@ function evidenceCard(input: TeachingEvidenceInput, values: {
   fact: string;
   interpretation: string;
   suggestion: string;
+  sentiment?: TeachingEvidenceCard["sentiment"];
   segments: TranscriptSegment[];
   confidence: EvidenceConfidence;
   uncertaintyNote: string | null;
   learningCheck?: TeachingEvidenceCard["learningCheck"];
+  analysis?: TeachingEvidenceCard["analysis"];
+  teacherView?: TeachingEvidenceCard["teacherView"];
 }): TeachingEvidenceCard {
   const startMs = Math.min(...values.segments.map((segment) => segment.startMs));
   const endMs = Math.max(...values.segments.map((segment) => segment.endMs));
   return {
     id: `evidence_${stableHash(`${input.lessonId}:${values.category}:${startMs}:${endMs}`).slice(0, 8)}`,
     category: values.category,
+    sentiment: values.sentiment || inferEvidenceSentiment(values),
     title: values.title,
     fact: values.fact,
     interpretation: values.interpretation,
@@ -450,8 +862,54 @@ function evidenceCard(input: TeachingEvidenceInput, values: {
     confidence: values.confidence,
     uncertaintyNote: values.uncertaintyNote,
     reviewStatus: "pending_review",
-    learningCheck: values.learningCheck
+    learningCheck: values.learningCheck,
+    analysis: values.analysis,
+    teacherView: values.teacherView || buildDefaultTeacherView(values)
   };
+}
+
+function buildDefaultTeacherView(values: {
+  category: EvidenceCategory;
+  title: string;
+  fact: string;
+  interpretation: string;
+  suggestion: string;
+  sentiment?: TeachingEvidenceCard["sentiment"];
+  learningCheck?: TeachingEvidenceCard["learningCheck"];
+}) {
+  const sentiment = values.sentiment || inferEvidenceSentiment(values);
+  if (sentiment === "positive") {
+    return {
+      title: values.title,
+      observation: values.interpretation,
+      teachingMeaning: "这是一个值得保留的课堂亮点。",
+      nextStep: values.suggestion
+    };
+  }
+  if (sentiment === "negative") {
+    return {
+      title: values.title,
+      observation: values.interpretation,
+      nextStep: values.suggestion
+    };
+  }
+  return {
+    title: values.title,
+    observation: values.interpretation || values.fact,
+    nextStep: values.suggestion
+  };
+}
+
+function inferEvidenceSentiment(values: {
+  category: EvidenceCategory;
+  learningCheck?: TeachingEvidenceCard["learningCheck"];
+}) {
+  if (values.category === "response_pattern" && values.learningCheck?.responsePattern === "teacher_self_answer") return "negative";
+  if (values.learningCheck?.evidenceStrength === "very_weak") return "negative";
+  if (["method_generalization", "variation_practice", "knowledge_connection", "structured_review", "error_analysis", "self_check"].includes(values.category)) {
+    return "positive";
+  }
+  return "neutral";
 }
 
 function learningCheck(

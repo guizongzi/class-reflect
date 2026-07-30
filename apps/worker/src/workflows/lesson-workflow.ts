@@ -4,8 +4,7 @@ import { runLessonAnalysisPipeline } from "../pipelines/lesson-analysis-pipeline
 
 const logger = createLogger("lesson-workflow");
 
-export async function runLessonWorkflowOnce(): Promise<{ claimed: boolean }> {
-  const workerId = process.env.WORKER_ID || `worker-${process.pid}`;
+export async function runLessonWorkflowOnce(workerId = process.env.WORKER_ID || `worker-${process.pid}`): Promise<{ claimed: boolean }> {
   const workflow = await claimNextWorkflowRun(workerId);
   if (!workflow) return { claimed: false };
 

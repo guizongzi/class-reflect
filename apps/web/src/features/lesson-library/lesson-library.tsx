@@ -73,7 +73,7 @@ export function LessonLibrary() {
   return (
     <main className="page-shell">
       <header className="topbar">
-        <div>
+        <div className="topbar-title">
           <strong>AI课堂回放与教学分析</strong>
           <span>课堂视频库</span>
         </div>
@@ -81,13 +81,14 @@ export function LessonLibrary() {
           <button className="ghost-button" disabled={isRefreshing} onClick={() => void loadLessons({ quiet: true })} type="button">
             {isRefreshing ? "刷新中" : "刷新状态"}
           </button>
+          <Link className="primary-button" href="/lessons/new">新建视频</Link>
         </div>
       </header>
       <section className="library-panel">
         <div className="section-heading">
           <div>
             <h1>已有课堂视频</h1>
-            <p>查看视频上传、后台处理、逐字稿和报告状态。</p>
+            <p>查看课堂视频、原文整理、证据审核和报告状态。</p>
           </div>
           <span>{hasLessons ? `${lessons.length} 节课` : "暂无数据"}</span>
         </div>

@@ -19,4 +19,9 @@ export class WorkflowsController {
   retry(@Param("lessonId") lessonId: string, @Body() body: unknown) {
     return this.workflows.retryLessonWorkflow(lessonId, body);
   }
+
+  @Post("confirm-transcript")
+  confirmTranscript(@Param("lessonId") lessonId: string) {
+    return this.workflows.confirmTranscriptReview(lessonId);
+  }
 }

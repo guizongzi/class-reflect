@@ -17,10 +17,11 @@ M2/M3 可选 Python ai-runtime
 上传课堂视频
 → 选择课堂类型
 → 对象存储
-→ Worker 处理音频与 ASR
-→ 时间轴逐字稿
-→ 大段课堂记录
-→ 教师校订
+→ 浏览器生成音频并并行上传
+→ Worker 调用 ASR 并保存逐字稿
+→ 逐字稿 Agent 生成分段时间轴
+→ 教师校订并确认
+→ 指标、事件和教学证据生成
 → 按需翻译
 → 证据复核
 → 确认后报告
@@ -95,9 +96,12 @@ M2/M3 可选 Python ai-runtime
 
 ## 文档
 
-- [MVP 产品设计及技术方案](docs/MVP产品设计及技术方案.md)
 - [技术手册](docs/TECHNICAL_MANUAL.md)
+- [当前架构说明](docs/ARCHITECTURE.md)
 - [架构基线](docs/ARCHITECTURE_BASELINE.md)
+- [实现与接口手册](docs/IMPLEMENTATION_AND_API_MANUAL.md)
+- [逐字稿处理 Agent 文档](docs/逐字稿处理 Agent 文档 .md)
+- [教学证据生成 Agent 文档](docs/教学证据生成 Agent 文档.md)
 - [文档入口](docs/README.md)
 
 规则：
@@ -214,7 +218,7 @@ FRONTEND_ORIGIN=http://localhost:3000
 | `LLM_BASE_URL` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | OpenAI-compatible `/chat/completions` base URL |
 | `LLM_API_KEY` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | LLM API key |
 | `LLM_MODEL` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | 例如 `qwen-plus` |
-| `PORT` | 可选 | Cloud Run 注入 `8080`；本地 API 默认可用 `3000` |
+| `PORT` | 可选 | Cloud Run 注入 `8080`；本地 API 默认 `3001`，Web 默认 `3000` |
 
 `.env.example` 中若有 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DIRECT_URL`、`PUBLIC_BASE_URL`、`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`FFMPEG_PATH` 等占位项，当前正式 M1 代码不会读取它们。
 
@@ -253,6 +257,7 @@ psql "$DATABASE_URL" -f packages/database/migrations/20260730_m1_core_tables.sql
 psql "$DATABASE_URL" -f packages/database/migrations/20260730_workflow_runs.sql
 psql "$DATABASE_URL" -f packages/database/migrations/20260730_section_translations.sql
 psql "$DATABASE_URL" -f packages/database/migrations/20260730_teaching_evidence_agent.sql
+psql "$DATABASE_URL" -f packages/database/migrations/20260730_transcript_agent_projection.sql
 ```
 
 如果使用 Supabase，可以在 Supabase SQL Editor 中按相同顺序执行这些文件内容。
@@ -265,6 +270,12 @@ psql "$DATABASE_URL" -f packages/database/migrations/20260730_teaching_evidence_
 pnpm web:dev
 pnpm api:dev
 pnpm worker:dev
+```
+
+需要更贴近线上队列行为时，可以让 Worker 常驻轮询并开启有限并发：
+
+```bash
+WORKER_CONCURRENCY=3 WORKER_POLL_INTERVAL_MS=3000 pnpm --filter @class-reflect/worker start
 ```
 
 也可以启动整个 workspace：
@@ -297,10 +308,29 @@ curl http://localhost:3000/api/health
 3. 上传视频，确认前端拿到 R2 预签名地址
 4. 完成视频和音频上传确认
 5. 启动 Worker 认领 workflow
-6. 查看课堂详情、workflow 进度和候选证据
+6. ASR 完成后查看分段时间轴和文稿
+7. 在“校订原文”阶段点击“确认校订完成”
+8. 查看指标、课堂事件、候选证据和证据复核
+9. 接受或驳回证据后生成报告
 ```
 
-当前 M1 正式骨架中，R2 上传、ASR Provider 入口、ASR 逐字稿入库、大段课堂记录生成、确定性课堂事件、基础指标、Guardrail、教学证据生成 Agent、证据审核和报告 Markdown 生成/编辑已接入。因此本地已经可以测试到“ASR 写库 → 分段 → 生成候选教学证据 → 人工审核 → 生成报告”。PDF 或 R2 报告文件导出留作后续增强；音视频仍保存在 Cloudflare R2，Supabase/PostgreSQL 只保存对象地址和业务数据。
+当前 M1 正式骨架中，R2 上传、浏览器音频上传、ASR Provider 入口、ASR 逐字稿入库、逐字稿处理 Agent、分段时间轴、确定性课堂事件、基础指标、Guardrail、教学证据生成 Agent、证据审核和报告 Markdown 生成/编辑已接入。因此本地已经可以测试到“上传视频/音频 → ASR 写库 → 分段 → 校订确认 → 生成候选教学证据 → 人工审核 → 生成报告”。PDF 或 R2 报告文件导出留作后续增强；音视频仍保存在 Cloudflare R2，Supabase/PostgreSQL 只保存对象地址和业务数据。
+
+### 6. 部署到 Google Cloud
+
+Cloud Build 触发器必须使用仓库内配置文件：
+
+```text
+infra/google-cloud/cloudbuild.yaml
+```
+
+不要使用“自动检测根目录 Dockerfile”，否则可能只更新单个旧服务，导致 API、Web、Worker 不一致。当前部署目标是：
+
+```text
+class-reflect-api
+class-reflect-web
+class-reflect-worker
+```
 
 检查和构建：
 
@@ -315,7 +345,7 @@ pnpm build
 | --- | --- |
 | Supabase PostgreSQL | 课堂、视频对象、workflow、逐字稿、证据、复核、报告 |
 | Cloudflare R2 | 原始视频、临时音频、导出报告 |
-| Google Cloud Run | API 和 Worker Job |
+| Google Cloud Run | Web、API 和 Worker Job |
 | Google Secret Manager | `APP_CONFIG_ENV` |
 | 阿里云 ASR | 文件转写与时间点 |
 | MyMemory / OpenAI-compatible LLM | 按需翻译；默认使用 MyMemory，只有 `TRANSLATION_PROVIDER=llm` 时才需要 LLM 配置 |
