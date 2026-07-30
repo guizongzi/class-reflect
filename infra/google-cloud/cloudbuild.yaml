@@ -102,10 +102,14 @@ steps:
       - "2"
       - --task-timeout
       - "3600"
+      - --max-retries
+      - "3"
+      - --tasks
+      - "1"
       - --command=pnpm
-      - --args=--filter,@class-reflect/worker,start,--,--once
+      - --args=--filter,@class-reflect/worker,start,--,--drain
       - --set-env-vars
-      - NODE_ENV=production,ASR_PROVIDER=aliyun
+      - NODE_ENV=production,ASR_PROVIDER=aliyun,WORKER_CONCURRENCY=4,WORKER_POLL_INTERVAL_MS=2000
       - --set-secrets
       - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
 
