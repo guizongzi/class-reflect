@@ -25,6 +25,8 @@ steps:
       - build
       - -f
       - infra/docker/Dockerfile.web
+      - --build-arg
+      - NEXT_PUBLIC_API_BASE_URL=https://${_API_SERVICE}-113773741484.${_REGION}.run.app
       - -t
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID
       - .

@@ -9,6 +9,10 @@ COPY apps ./apps
 COPY packages ./packages
 
 RUN pnpm install --lockfile=false
+
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+
 RUN pnpm build
 
 ENV NODE_ENV=production
