@@ -9,6 +9,7 @@ substitutions:
   _WORKER_SERVICE: class-reflect-worker
 
 steps:
+  # 1. Build API image
   - name: gcr.io/cloud-builders/docker
     args:
       - build
@@ -18,11 +19,13 @@ steps:
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
       - .
 
+  # 2. Push API image
   - name: gcr.io/cloud-builders/docker
     args:
       - push
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
 
+  # 3. Build Web image
   - name: gcr.io/cloud-builders/docker
     args:
       - build
@@ -34,11 +37,13 @@ steps:
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID
       - .
 
+  # 4. Push Web image
   - name: gcr.io/cloud-builders/docker
     args:
       - push
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID
 
+  # 5. Deploy API service
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
@@ -63,6 +68,30 @@ steps:
       - --set-secrets
       - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
 
+  # 6. Deploy Web service
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_WEB_SERVICE}
+      - --image
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID
+      - --region
+      - ${_REGION}
+      - --platform
+      - managed
+      - --allow-unauthenticated
+      - --memory
+      - 1Gi
+      - --cpu
+      - "1"
+      - --timeout
+      - "300"
+      - --set-env-vars
+      - NODE_ENV=production,NEXT_PUBLIC_API_BASE_URL=https://${_API_SERVICE}-113773741484.${_REGION}.run.app
+
+  # 7. Deploy Worker service
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
@@ -84,34 +113,6 @@ steps:
       - "3600"
       - --command=pnpm
       - --args=--filter,@class-reflect/worker,start
-      - --set-env-vars
-      - NODE_ENV=production,ASR_PROVIDER=aliyun,WORKER_CONCURRENCY=4,WORKER_POLL_INTERVAL_MS=2000
-      - --set-secrets
-      - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
-
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
-    entrypoint: gcloud
-    args:
-      - run
-      - deploy
-      - ${_WORKER_SERVICE}
-      - --image
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
-      - --region
-      - ${_REGION}
-      - --platform
-      - managed
-      - --allow-unauthenticated
-      - --memory
-      - 2Gi
-      - --cpu
-      - "2"
-      - --timeout
-      - "3600"
-      - --command
-      - pnpm
-      - --args
-      - --filter,@class-reflect/worker,start
       - --set-env-vars
       - NODE_ENV=production,ASR_PROVIDER=aliyun,WORKER_CONCURRENCY=4,WORKER_POLL_INTERVAL_MS=2000
       - --set-secrets
