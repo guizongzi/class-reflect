@@ -35,13 +35,21 @@ async function main() {
 
 function parseWorkerConcurrency(value: string | undefined) {
   const parsed = Number(value || 1);
-  if (!Number.isFinite(parsed)) return 1;
+
+  if (!Number.isFinite(parsed)) {
+    return 1;
+  }
+
   return Math.max(1, Math.min(8, Math.floor(parsed)));
 }
 
 function parseWorkerPollInterval(value: string | undefined) {
   const parsed = Number(value || 3000);
-  if (!Number.isFinite(parsed)) return 3000;
+
+  if (!Number.isFinite(parsed)) {
+    return 3000;
+  }
+
   return Math.max(500, Math.min(60_000, Math.floor(parsed)));
 }
 
@@ -117,6 +125,11 @@ async function readJsonBody(request: IncomingMessage) {
 }
 
 main().catch((error) => {
-  logger.error("worker failed", { error: error instanceof Error ? error.message : String(error) });
+  logger.error("worker failed", {
+    error: error instanceof Error
+      ? error.message
+      : String(error)
+  });
+
   process.exitCode = 1;
 });
