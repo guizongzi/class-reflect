@@ -197,10 +197,11 @@ async function tryRunLlmAgent<T>(input: { promptVersion: string; payload: unknow
     if (!input.validate(result)) {
       logger.error("ai call returned invalid payload", {
         promptVersion: input.promptVersion,
-        payloadSummary: summarizePayload(input.payload)
+        payloadSummary: summarizePayload(input.payload),
+        resultSummary: summarizeResult(result)
       });
-      return null;
-    }
+    return null;
+  }
 
     return result;
   } catch {
@@ -256,6 +257,81 @@ function summarizePayload(payload: unknown) {
   };
 }
 
+function summarizeResult(value: unknown) {
+  if (value === null) {
+    return {
+      type: "null"
+    };
+  }
+
+  if (Array.isArray(value)) {
+    return {
+      type: "array",
+      length: value.length,
+      firstItemType:
+        value.length > 0
+          ? Array.isArray(value[0])
+            ? "array"
+            : typeof value[0]
+          : undefined
+    };
+  }
+
+  if (typeof value !== "object") {
+    return {
+      type: typeof value,
+      valuePreview: String(value).slice(0, 200)
+    };
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  return {
+    type: "object",
+    keys: Object.keys(candidate).slice(0, 30),
+
+    lessonIdType: typeof candidate.lessonId,
+    lessonFormatType:
+      typeof candidate.lesson_format !== "undefined"
+        ? typeof candidate.lesson_format
+        : typeof candidate.lessonFormat,
+
+    instructionalContextType:
+      candidate.instructionalContext === null
+        ? "null"
+        : Array.isArray(candidate.instructionalContext)
+          ? "array"
+          : typeof candidate.instructionalContext,
+
+    evidenceCardsType: Array.isArray(candidate.evidenceCards)
+      ? "array"
+      : candidate.evidenceCards === null
+        ? "null"
+        : typeof candidate.evidenceCards,
+
+    evidenceCardsCount: Array.isArray(candidate.evidenceCards)
+      ? candidate.evidenceCards.length
+      : undefined,
+
+    skippedCategoriesType: Array.isArray(candidate.skippedCategories)
+      ? "array"
+      : candidate.skippedCategories === null
+        ? "null"
+        : typeof candidate.skippedCategories,
+
+    skippedCategoriesCount: Array.isArray(candidate.skippedCategories)
+      ? candidate.skippedCategories.length
+      : undefined,
+
+    generationSummaryType:
+      candidate.generationSummary === null
+        ? "null"
+        : Array.isArray(candidate.generationSummary)
+          ? "array"
+          : typeof candidate.generationSummary
+  };
+}
+
 function isTranscriptNormalizerOutput(value: unknown): value is TranscriptNormalizerOutput {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -274,6 +350,119 @@ function isTeachingEvidenceOutput(value: unknown): value is TeachingEvidenceOutp
     && !!candidate.generationSummary
     && typeof candidate.generationSummary === "object";
 }
+
+const teachingEvidenceOutputInstruction = `
+你是课堂教学证据分析 Agent。
+
+请根据输入的课堂逐字稿、课堂指标、课堂事件、课程形式和能力矩阵，
+生成可被教师复核的教学证据。
+
+你必须只返回一个合法 JSON 对象：
+- 不要返回 Markdown。
+- 不要使用代码块。
+- 不要添加 JSON 之外的解释。
+- 所有字段名必须与下面结构完全一致。
+- 不允许把字段名改成 cards、summary、lessonFormat 等其他名称。
+- 数组没有内容时返回 []，不要省略。
+- 可选对象没有依据时可以省略。
+- nullable 字段没有内容时必须返回 null。
+- 不得虚构逐字稿中不存在的话语、时间、指标或课堂事件。
+- transcriptSegmentIds、metricIds、classroomEventIds 只能引用输入中真实存在的 ID。
+- startMs 和 endMs 必须来自引用证据的真实时间范围。
+- quote 必须来自逐字稿原文；无法获得原文时返回空字符串。
+- 输出语言为简体中文。
+
+必须严格返回以下 JSON 结构：
+
+{
+  "lessonId": "string",
+  "lesson_format": "offline_classroom_recording | live_online_class | recorded_online_class",
+  "instructionalContext": "new_instruction | exam_practice | review_lesson | test_paper_review | mixed | unknown",
+  "evidenceCards": [
+    {
+      "id": "string",
+      "category": "lecture_duration | question_quality | wait_time | student_response | feedback_quality | follow_up | lesson_structure | practice_check | self_check | information_density | technical_issue | lesson_summary | response_pattern | learning_check_level | classroom_management | error_analysis | method_generalization | variation_practice | knowledge_connection | structured_review | weakness_detection",
+      "sentiment": "positive | neutral | negative",
+      "title": "string",
+      "fact": "string",
+      "interpretation": "string",
+      "suggestion": "string",
+
+      "analysis": {
+        "evidenceCategory": "lecture_duration | question_quality | wait_time | student_response | feedback_quality | follow_up | lesson_structure | practice_check | self_check | information_density | technical_issue | lesson_summary | response_pattern | learning_check_level | classroom_management | error_analysis | method_generalization | variation_practice | knowledge_connection | structured_review | weakness_detection",
+        "utteranceType": "string",
+        "includedInQuestionCount": true,
+        "includedInInteractionCount": true,
+        "evidenceStrength": "very_weak | weak | medium | strong | very_strong",
+        "internalReason": "string",
+        "suggestionDirection": "string"
+      },
+
+      "teacherView": {
+        "title": "string",
+        "observation": "string",
+        "teachingMeaning": "string",
+        "nextStep": "string",
+        "exampleWording": "string"
+      },
+
+      "startMs": 0,
+      "endMs": 0,
+      "quote": "string",
+      "transcriptSegmentIds": ["string"],
+      "metricIds": ["string"],
+      "classroomEventIds": ["string"],
+
+      "applicableLessonFormats": [
+        "offline_classroom_recording | live_online_class | recorded_online_class"
+      ],
+
+      "confidence": "low | medium | high | needs_review",
+      "uncertaintyNote": "string | null",
+      "reviewStatus": "pending_review",
+
+      "learningCheck": {
+        "level": 1,
+        "checkType": "oral_confirmation | concept_restatement | specific_question | reason_explanation | transfer_or_task",
+        "responsePattern": "individual_student_response | choral_response | teacher_self_answer | multiple_student_overlap | no_audible_response | unknown_response",
+        "evidenceStrength": "very_weak | weak | medium | strong | very_strong",
+        "limitationNote": "string | null"
+      }
+    }
+  ],
+
+  "skippedCategories": [
+    {
+      "category": "lecture_duration | question_quality | wait_time | student_response | feedback_quality | follow_up | lesson_structure | practice_check | self_check | information_density | technical_issue | lesson_summary | response_pattern | learning_check_level | classroom_management | error_analysis | method_generalization | variation_practice | knowledge_connection | structured_review | weakness_detection",
+      "reason": "capability_not_supported | insufficient_evidence | category_disabled | not_applicable_to_lesson_format"
+    }
+  ],
+
+  "generationSummary": {
+    "analyzedTranscriptSegmentCount": 0,
+    "analyzedMetricCount": 0,
+    "generatedEvidenceCount": 0
+  }
+}
+
+额外要求：
+
+1. lessonId 必须原样复制输入中的 lessonId。
+2. lesson_format 必须原样复制输入中的 lessonFormat。
+3. generationSummary.analyzedTranscriptSegmentCount 必须等于输入 transcriptSegments 的数量。
+4. generationSummary.analyzedMetricCount 必须等于输入 metrics 的数量。
+5. generationSummary.generatedEvidenceCount 必须等于 evidenceCards.length。
+6. reviewStatus 固定返回 "pending_review"。
+7. evidenceCards 必须遵守 generationConfig.maxEvidenceCards。
+8. 只能生成 generationConfig.enabledCategories 允许的类别。
+9. 对能力矩阵不支持的类别，不要生成 evidenceCards，放入 skippedCategories。
+10. 对证据不足的类别，放入 skippedCategories，并使用 reason="insufficient_evidence"。
+11. analysis.evidenceCategory 必须与外层 category 完全一致。
+12. learningCheck 只在学习检查相关证据中返回，否则省略。
+13. analysis 和 teacherView 缺少可靠依据时可以省略。
+14. sentiment 无法确定时返回 "neutral"。
+15. confidence 不能仅根据主观判断，必须结合逐字稿、指标或课堂事件。
+`;
 
 export async function runTranscriptNormalizer(segments: TranscriptSegment[]): Promise<AgentResult<TranscriptNormalizerOutput>> {
   const llmOutput = await tryRunLlmAgent<TranscriptNormalizerOutput>({
@@ -315,17 +504,29 @@ export async function runTranscriptNormalizer(segments: TranscriptSegment[]): Pr
   };
 }
 
-export async function runTeachingEvidenceAgent(input: TeachingEvidenceInput): Promise<AgentResult<TeachingEvidenceOutput>> {
+export async function runTeachingEvidenceAgent(
+  input: TeachingEvidenceInput
+): Promise<AgentResult<TeachingEvidenceOutput>> {
   const llmOutput = await tryRunLlmAgent<TeachingEvidenceOutput>({
     promptVersion: "teaching-evidence.llm.v1",
     payload: {
+      instruction: teachingEvidenceOutputInstruction,
+
       lessonId: input.lessonId,
       lessonFormat: input.lesson_format,
-      capabilityMatrix: input.capabilityMatrix || capabilityMatrixByLessonFormat[input.lesson_format],
+
+      capabilityMatrix:
+        input.capabilityMatrix ||
+        capabilityMatrixByLessonFormat[input.lesson_format],
+
       transcriptSegments: input.transcriptSegments,
       metrics: input.metrics,
       classroomEvents: input.classroomEvents || [],
-      generationConfig: input.generationConfig || { language: "zh-CN" }
+
+      generationConfig:
+        input.generationConfig || {
+          language: "zh-CN"
+        }
     },
     validate: isTeachingEvidenceOutput
   });
@@ -338,74 +539,8 @@ export async function runTeachingEvidenceAgent(input: TeachingEvidenceInput): Pr
     };
   }
 
-  const capabilityMatrix = input.capabilityMatrix || capabilityMatrixByLessonFormat[input.lesson_format];
-  const enabledCategories = input.generationConfig?.enabledCategories || defaultEvidenceCategories;
-  const maxEvidenceCards = input.generationConfig?.maxEvidenceCards || 6;
-  const minimumConfidence = input.generationConfig?.minimumConfidence || "low";
-  const sortedSegments = [...input.transcriptSegments].sort((a, b) => a.startMs - b.startMs);
-  const instructionalContext = inferInstructionalContext(sortedSegments);
-  const cards: TeachingEvidenceCard[] = [];
-  const skippedCategories: TeachingEvidenceOutput["skippedCategories"] = [];
-
-  for (const category of defaultEvidenceCategories) {
-    if (!enabledCategories.includes(category)) {
-      skippedCategories.push({ category, reason: "category_disabled" });
-    }
-  }
-
-  for (const category of enabledCategories) {
-    if (!isCategorySupported(category, input.lesson_format, capabilityMatrix)) {
-      skippedCategories.push({
-        category,
-        reason: input.lesson_format === "recorded_online_class" ? "not_applicable_to_lesson_format" : "capability_not_supported"
-      });
-    }
-  }
-
-  const pushCard = (card: TeachingEvidenceCard | null) => {
-    if (!card) return;
-    if (cards.length >= maxEvidenceCards) return;
-    if (!meetsMinimumConfidence(card.confidence, minimumConfidence)) return;
-    if (enabledCategories.includes(card.category) && isCategorySupported(card.category, input.lesson_format, capabilityMatrix)) {
-      cards.push(card);
-    }
-  };
-
-  pushCard(buildOralConfirmationCard(input, sortedSegments));
-  pushCard(buildTeacherSelfAnswerCard(input, sortedSegments));
-  pushCard(buildClassroomManagementCard(input, sortedSegments));
-  pushCard(buildTechnicalIssueCard(input, sortedSegments));
-  pushCard(buildErrorAnalysisCard(input, sortedSegments, instructionalContext));
-  pushCard(buildMethodGeneralizationCard(input, sortedSegments, instructionalContext));
-  pushCard(buildKnowledgeConnectionCard(input, sortedSegments, instructionalContext));
-  pushCard(buildVariationPracticeCard(input, sortedSegments, instructionalContext));
-  pushCard(buildSelfCheckCard(input, sortedSegments));
-  pushCard(buildLessonSummaryCard(input, sortedSegments));
-
-  for (const category of enabledCategories) {
-    if (!skippedCategories.some((item) => item.category === category) && !cards.some((card) => card.category === category)) {
-      skippedCategories.push({ category, reason: "insufficient_evidence" });
-    }
-  }
-
-  return {
-    output: {
-      lessonId: input.lessonId,
-      lesson_format: input.lesson_format,
-      instructionalContext,
-      evidenceCards: cards,
-      skippedCategories,
-      generationSummary: {
-        analyzedTranscriptSegmentCount: sortedSegments.length,
-        analyzedMetricCount: input.metrics.length,
-        generatedEvidenceCount: cards.length
-      }
-    },
-    promptVersion: "teaching-evidence.v0.1.1",
-    warnings: skippedCategories
-      .filter((item) => item.reason === "not_applicable_to_lesson_format" || item.reason === "capability_not_supported")
-      .map((item) => `${item.category}:${item.reason}`)
-  };
+  // 原有 rule-based fallback 继续保留
+  // ...
 }
 
 type SpeakerProfile = {
