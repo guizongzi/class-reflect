@@ -82,6 +82,12 @@ type ReportItem = {
   createdAt?: string;
 };
 
+type ChatMessage = {
+  id: string;
+  role: "assistant" | "user";
+  content: string;
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const defaultLessonFormat: LessonFormat = "offline_classroom_recording";
 
@@ -108,6 +114,14 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [reportDraft, setReportDraft] = useState("");
   const [savingReport, setSavingReport] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      content: "你可以直接问我：这节课现在处理到哪了、哪些证据值得先看、报告可以怎么改。"
+    }
+  ]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -312,6 +326,29 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
     }
   }
 
+  function sendChatMessage() {
+    const message = chatInput.trim();
+    if (!message) return;
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: message
+    };
+    const assistantMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: "assistant",
+      content: buildChatReply(message, {
+        evidenceCount: evidenceCards.length,
+        lessonTextCount: lessonTexts.length,
+        reportCount: reports.length,
+        step,
+        workflowSummary: workflowStatus ? formatWorkflowSummary(workflowStatus) : "等待上传"
+      })
+    };
+    setChatMessages((messages) => [...messages, userMessage, assistantMessage]);
+    setChatInput("");
+  }
+
   return (
     <main className="workspace-shell">
       <section className="workspace-main">
@@ -473,6 +510,43 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
             <span>{isWorkflowRefreshing ? "刷新中" : formatWorkflowSummary(workflowStatus)}</span>
           </div>
           <WorkflowStepList steps={workflowStatus?.steps || []} />
+        </section>
+        <section className="assistant-card muted ai-chat-card">
+          <div className="assistant-card-title">
+            <strong>AI 对话</strong>
+            <span>{activeLessonId ? "围绕当前课堂" : "等待课堂创建"}</span>
+          </div>
+          <div className="chat-message-list">
+            {chatMessages.map((message) => (
+              <div className={`chat-message ${message.role}`} key={message.id}>
+                <span>{message.role === "assistant" ? "AI" : "我"}</span>
+                <p>{message.content}</p>
+              </div>
+            ))}
+          </div>
+          <form
+            className="chat-input-row"
+            onSubmit={(event) => {
+              event.preventDefault();
+              sendChatMessage();
+            }}
+          >
+            <textarea
+              aria-label="和 AI 对话"
+              placeholder="问问这节课的证据、转写或报告..."
+              value={chatInput}
+              onChange={(event) => setChatInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  sendChatMessage();
+                }
+              }}
+            />
+            <button className="primary-button compact-button" disabled={!chatInput.trim()} type="submit">
+              发送
+            </button>
+          </form>
         </section>
         <section className="assistant-card muted">
           <div className="assistant-card-title">
@@ -745,6 +819,35 @@ function buildAssistantMessage(step: UploadStep) {
     completed: "上传链路已完成，下一步可以进入转写和课堂分段。",
     failed: "上传链路失败，请根据错误提示修正配置或重试。"
   }[step];
+}
+
+function buildChatReply(message: string, context: {
+  evidenceCount: number;
+  lessonTextCount: number;
+  reportCount: number;
+  step: UploadStep;
+  workflowSummary: string;
+}) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("证据") || normalized.includes("evidence")) {
+    return context.evidenceCount
+      ? `当前有 ${context.evidenceCount} 张候选证据。建议先看带有明确时间段和课堂原话的证据，再决定接受、驳回或补充上下文。`
+      : "现在还没有候选证据。等转写和课堂分段完成后，处理卡片会推进到教学证据生成。";
+  }
+  if (normalized.includes("报告") || normalized.includes("report")) {
+    return context.reportCount
+      ? "已经有报告草稿。你可以让我帮你检查结构、补强证据链，或把语言改得更适合教研复盘。"
+      : "报告还没生成。建议先完成证据审核，再生成报告，这样报告会更贴近课堂事实。";
+  }
+  if (normalized.includes("进度") || normalized.includes("状态") || normalized.includes("处理")) {
+    return `当前状态：${context.workflowSummary}。课堂记录已有 ${context.lessonTextCount} 段，上传状态是 ${buildAssistantMessage(context.step)}`;
+  }
+  if (normalized.includes("转写") || normalized.includes("字幕") || normalized.includes("transcript")) {
+    return context.lessonTextCount
+      ? `当前已经读取到 ${context.lessonTextCount} 段课堂记录。你可以点击段落翻译，也可以校订大段课堂记录后再生成证据。`
+      : "现在还没有课堂记录。请先确认视频和音频上传完成，再让 Worker 执行转写流程。";
+  }
+  return "收到。我会结合当前课堂的上传状态、转写、证据和报告来协助你。现在这个对话框先提供本地上下文回复，后续可以接入真正的 AI 对话服务。";
 }
 
 function WorkflowStepList({ steps }: { steps: WorkflowStepItem[] }) {

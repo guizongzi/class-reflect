@@ -577,6 +577,10 @@ a {
   background: #f7f8f6;
 }
 
+.ai-chat-card {
+  min-height: 260px;
+}
+
 .assistant-card-title {
   align-items: center;
   display: flex;
@@ -651,6 +655,66 @@ a {
 
 .workflow-step.failed b {
   color: #b42318;
+}
+
+.chat-message-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.chat-message {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.chat-message span {
+  color: #667085;
+  font-size: 11px;
+}
+
+.chat-message p {
+  background: #ffffff;
+  border: 1px solid #dfe4dc;
+  border-radius: 8px;
+  color: #344054;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.chat-message.user {
+  justify-items: end;
+}
+
+.chat-message.user p {
+  background: #e8f5ee;
+  border-color: #b7dfc9;
+  color: #1d4735;
+}
+
+.chat-input-row {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.chat-input-row textarea {
+  background: #ffffff;
+  border: 1px solid #dfe4dc;
+  border-radius: 8px;
+  color: #142033;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 42px;
+  padding: 9px 10px;
+  resize: vertical;
 }
 
 .evidence-list {
