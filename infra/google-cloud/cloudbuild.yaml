@@ -1,7 +1,7 @@
 substitutions:
   _REGION: asia-southeast1
   _REPOSITORY: class-reflect
-  _API_SERVICE: class-reflect
+  _API_SERVICE: class-reflect-api
   _WEB_SERVICE: class-reflect-web
   _WORKER_JOB: class-reflect-worker
 
