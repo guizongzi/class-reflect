@@ -100,6 +100,7 @@ export type LessonDetailRecord = {
     createdAt: string;
     updatedAt: string;
   };
+  videos: LessonVideoRecord[];
   sections: unknown[];
   transcriptSegments: unknown[];
   evidenceCards: unknown[];
@@ -309,7 +310,8 @@ export async function getLessonRecord(lessonId: string): Promise<LessonDetailRec
   const lesson = lessonResult.rows[0];
   if (!lesson) return null;
 
-  const [sections, transcriptSegments, evidenceCards, reports] = await Promise.all([
+  const [videos, sections, transcriptSegments, evidenceCards, reports] = await Promise.all([
+    listLessonVideoRecords(lessonId),
     getPool().query("select * from lesson_sections where lesson_id = $1 order by start_ms", [lessonId]),
     getPool().query("select * from transcript_segments where lesson_id = $1 order by start_ms", [lessonId]),
     getPool().query("select * from evidence_cards where lesson_id = $1 order by created_at", [lessonId]),
@@ -328,6 +330,7 @@ export async function getLessonRecord(lessonId: string): Promise<LessonDetailRec
       createdAt: toIsoString(lesson.created_at),
       updatedAt: toIsoString(lesson.updated_at)
     },
+    videos,
     sections: sections.rows,
     transcriptSegments: transcriptSegments.rows,
     evidenceCards: evidenceCards.rows,
@@ -971,6 +974,16 @@ export async function updateLessonVideoObjectKey(input: { videoId: string; objec
 export async function getLessonVideoRecord(videoId: string): Promise<LessonVideoRecord | null> {
   const result = await getPool().query("select * from lesson_videos where id = $1", [videoId]);
   return result.rows[0] ? mapLessonVideoRow(result.rows[0]) : null;
+}
+
+export async function listLessonVideoRecords(lessonId: string): Promise<LessonVideoRecord[]> {
+  const result = await getPool().query(`
+    select *
+    from lesson_videos
+    where lesson_id = $1
+    order by created_at desc
+  `, [lessonId]);
+  return result.rows.map(mapLessonVideoRow);
 }
 
 export async function markLessonVideoUploaded(videoId: string): Promise<LessonVideoRecord | null> {

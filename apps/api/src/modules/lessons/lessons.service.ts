@@ -20,6 +20,7 @@ import {
   assertR2ObjectExists,
   createLessonAudioObjectKey,
   createLessonVideoObjectKey,
+  createR2ReadUrl,
   createR2UploadUrl,
   createConfiguredTranslationProvider
 } from "@class-reflect/providers";
@@ -64,7 +65,22 @@ export class LessonsService {
   async getLesson(lessonId: string) {
     const lesson = await getLessonRecord(lessonId);
     if (!lesson) throw new NotFoundException("lesson not found");
-    return lesson;
+    const videos = await Promise.all((lesson.videos || []).map(async (video) => {
+      if (video.uploadStatus !== "uploaded" || !video.objectKey) return video;
+      try {
+        return {
+          ...video,
+          playbackUrl: await createR2ReadUrl({ objectKey: video.objectKey, expiresInSeconds: 3600 }),
+          playbackUrlExpiresInSeconds: 3600
+        };
+      } catch (error) {
+        return {
+          ...video,
+          playbackError: error instanceof Error ? error.message : "无法生成视频播放链接"
+        };
+      }
+    }));
+    return { ...lesson, videos };
   }
 
   async deleteLesson(lessonId: string) {

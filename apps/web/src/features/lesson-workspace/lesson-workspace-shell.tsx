@@ -46,7 +46,17 @@ type LessonTextItem = {
   translatedText: string | null;
 };
 
+type LessonVideoItem = {
+  id: string;
+  fileName?: string | null;
+  uploadStatus?: string | null;
+  playbackUrl?: string | null;
+  playbackError?: string | null;
+  playbackUrlExpiresInSeconds?: number | null;
+};
+
 type LessonDetailResponse = {
+  videos?: LessonVideoItem[];
   sections?: Array<Record<string, unknown>>;
   transcriptSegments?: Array<Record<string, unknown>>;
   evidenceCards?: EvidenceCardItem[];
@@ -131,7 +141,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
 
   useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
 
@@ -142,6 +152,19 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
       try {
         const detail = await getJson<LessonDetailResponse>(`/api/lessons/${activeLessonId}`);
         if (!cancelled) {
+          const playableVideo = detail.videos?.find((video) => video.playbackUrl) || null;
+          const uploadedVideo = detail.videos?.find((video) => video.uploadStatus === "uploaded") || null;
+          if (playableVideo?.playbackUrl) {
+            if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+            setPreviewUrl(playableVideo.playbackUrl);
+            setSelectedFileName(playableVideo.fileName || "已上传视频");
+            setVideoProgress(100);
+            setStatusMessage("已加载云端视频，可直接播放。");
+          } else if (uploadedVideo) {
+            setSelectedFileName(uploadedVideo.fileName || "已上传视频");
+            setVideoProgress(100);
+            setStatusMessage(uploadedVideo.playbackError || "视频已上传，但暂时无法生成播放链接。");
+          }
           const textItems = buildLessonTextItems(detail);
           setLessonTexts(textItems);
           setEditingTextById(Object.fromEntries(textItems.map((item) => [item.id, item.originalText])));
@@ -306,7 +329,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
       return;
     }
 
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(URL.createObjectURL(file));
     setSelectedFileName(file.name);
     setVideoProgress(0);
