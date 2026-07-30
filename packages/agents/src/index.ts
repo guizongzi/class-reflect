@@ -109,6 +109,54 @@ export type TranscriptNormalizerOutput = {
   };
 };
 
+const transcriptNormalizerInstruction = `
+你是课堂逐字稿整理 Agent。
+
+只返回合法 JSON，不要返回 Markdown，不要添加额外解释。
+
+必须严格返回：
+
+{
+  "normalizedSegments": [
+    {
+      "id": "string",
+      "startMs": 0,
+      "endMs": 0,
+      "speakerLabel": "string | null",
+      "text": "string",
+      "confidence": 0
+    }
+  ],
+  "displaySections": [
+    {
+      "startMs": 0,
+      "endMs": 0,
+      "title": "string",
+      "summaryText": "string",
+      "confidenceLabel": "string",
+      "tags": ["string"],
+      "transcriptSegmentIds": ["string"]
+    }
+  ],
+  "analysisProjection": {
+    "sentenceCount": 0,
+    "teacherSentenceCount": 0,
+    "studentSentenceCount": 0,
+    "lowConfidenceSentenceCount": 0,
+    "flags": ["string"]
+  }
+}
+
+规则：
+1. normalizedSegments.length 必须等于输入 segments.length。
+2. 每个 normalizedSegments.id 必须来自输入。
+3. 不得修改 startMs 和 endMs。
+4. 不得虚构逐字稿内容。
+5. displaySections.transcriptSegmentIds 只能引用输入 ID。
+6. sentenceCount 必须等于 normalizedSegments.length。
+7. 所有计数字段必须是 number。
+`;
+
 const logger = {
   info(message: string, meta?: unknown) {
     console.log(JSON.stringify({ level: "info", scope: "agents.llm", message, meta }));
@@ -464,11 +512,13 @@ const teachingEvidenceOutputInstruction = `
 15. confidence 不能仅根据主观判断，必须结合逐字稿、指标或课堂事件。
 `;
 
-export async function runTranscriptNormalizer(segments: TranscriptSegment[]): Promise<AgentResult<TranscriptNormalizerOutput>> {
+export async function runTranscriptNormalizer(
+  segments: TranscriptSegment[]
+): Promise<AgentResult<TranscriptNormalizerOutput>> {
   const llmOutput = await tryRunLlmAgent<TranscriptNormalizerOutput>({
     promptVersion: "transcript-agent.llm.v1",
     payload: {
-      instruction: "请把逐字稿整理成规范化的句子列表，并给出展示分段与分析投影。",
+      instruction: transcriptNormalizerInstruction,
       segments
     },
     validate: isTranscriptNormalizerOutput
