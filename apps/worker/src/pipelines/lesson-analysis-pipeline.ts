@@ -41,11 +41,12 @@ const processors = new Map<string, WorkflowProcessor>([
   [exportReportProcessor.stepKey, exportReportProcessor]
 ]);
 
-export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
+export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord, correlationId?: string) {
   const orchestrator = new AgentOrchestrator();
+  const traceId = correlationId || buildWorkflowCorrelationId(workflow.id, workflow.retryCount);
   let status = await getWorkflowStatusForLesson(workflow.lessonId);
   if (status.task?.status === "cancelled") {
-    logger.info("workflow cancelled before pipeline start", { workflowRunId: workflow.id });
+    logger.info("workflow cancelled before pipeline start", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount });
     return;
   }
 
@@ -57,7 +58,7 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
     hasUploadedAudio: status.steps.find((step) => step.stepKey === "upload_audio")?.status === "completed",
     steps: status.steps
   });
-  logger.info("workflow agent decision", { workflowRunId: workflow.id, decision: decision.output });
+  logger.info("workflow agent decision", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount, decision: decision.output });
 
   if (decision.output.action === "wait_for_upload") {
     await updateWorkflowRunStatus({
@@ -73,7 +74,7 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
   for (const step of workflowStepOptions) {
     status = await getWorkflowStatusForLesson(workflow.lessonId);
     if (status.task?.status === "cancelled") {
-      logger.info("workflow cancelled before step", { workflowRunId: workflow.id, stepKey: step.key });
+      logger.info("workflow cancelled before step", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount, stepKey: step.key });
       return;
     }
 
@@ -117,7 +118,7 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
       const result = await processor.run(context);
       const latestStatus = await getWorkflowStatusForLesson(workflow.lessonId);
       if (latestStatus.task?.status === "cancelled") {
-        logger.info("workflow cancelled after step processor", { workflowRunId: workflow.id, stepKey: step.key });
+        logger.info("workflow cancelled after step processor", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount, stepKey: step.key });
         return;
       }
 
@@ -160,6 +161,7 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
       if (step.key === "wait_human_review") return;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      logger.error("workflow step failed", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount, stepKey: step.key, error: message });
       await updateWorkflowStep({
         workflowRunId: workflow.id,
         stepKey: step.key,
@@ -184,10 +186,15 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
     currentStep: "export_report",
     progress: 100
   });
+  logger.info("workflow completed", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount });
 }
 
 function calculateWorkflowProgress(stepKey: WorkflowStepKey) {
   const index = workflowStepOptions.findIndex((step) => step.key === stepKey);
   if (index < 0) return 0;
   return Math.round((index / Math.max(workflowStepOptions.length - 1, 1)) * 100);
+}
+
+function buildWorkflowCorrelationId(workflowRunId: string, retryCount: number) {
+  return `workflow-${workflowRunId}-retry-${retryCount}`;
 }

@@ -7,19 +7,23 @@ const logger = createLogger("lesson-workflow");
 export async function runLessonWorkflowOnce(workerId = process.env.WORKER_ID || `worker-${process.pid}`): Promise<{ claimed: boolean }> {
   const workflow = await claimNextWorkflowRun(workerId);
   if (!workflow) return { claimed: false };
+  const correlationId = buildWorkflowCorrelationId(workflow.id, workflow.retryCount);
 
   logger.info("claimed workflow", {
+    correlationId,
     workflowRunId: workflow.id,
+    retryCount: workflow.retryCount,
     lessonId: workflow.lessonId,
     videoId: workflow.videoId
   });
-  await runLessonAnalysisPipeline(workflow);
+  await runLessonAnalysisPipeline(workflow, correlationId);
   return { claimed: true };
 }
 
 export async function runLessonWorkflowById(input: {
   workflowRunId: string;
   workerId?: string;
+  correlationId?: string;
 }): Promise<{ processed: boolean; reason?: string }> {
   const workerId = input.workerId || process.env.WORKER_ID || `worker-${process.pid}`;
   const workflow = await claimWorkflowRunById(input.workflowRunId, workerId);
@@ -33,11 +37,18 @@ export async function runLessonWorkflowById(input: {
     return { processed: false, reason: current.status };
   }
 
+  const correlationId = input.correlationId || buildWorkflowCorrelationId(workflow.id, workflow.retryCount);
   logger.info("claimed workflow by id", {
+    correlationId,
     workflowRunId: workflow.id,
+    retryCount: workflow.retryCount,
     lessonId: workflow.lessonId,
     videoId: workflow.videoId
   });
-  await runLessonAnalysisPipeline(workflow);
+  await runLessonAnalysisPipeline(workflow, correlationId);
   return { processed: true };
+}
+
+function buildWorkflowCorrelationId(workflowRunId: string, retryCount: number) {
+  return `workflow-${workflowRunId}-retry-${retryCount}`;
 }

@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { loadAppConfig } from "@class-reflect/config";
 import { createLogger } from "@class-reflect/observability";
 import { createServer, type IncomingMessage } from "node:http";
@@ -75,28 +77,41 @@ async function startHttpServer(baseWorkerId: string) {
 
       const body = await readJsonBody(request);
       const workflowRunId = typeof body.workflowRunId === "string" ? body.workflowRunId : "";
+      const correlationId = typeof body.correlationId === "string" && body.correlationId ? body.correlationId : workflowRunId;
       if (!workflowRunId) {
         response.writeHead(400, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ ok: false, error: "workflowRunId is required" }));
         return;
       }
 
-      const result = await runLessonWorkflowById({ workflowRunId, workerId: baseWorkerId });
+      logger.info("workflow request received", {
+        correlationId,
+        workflowRunId,
+        lessonId: typeof body.lessonId === "string" ? body.lessonId : undefined,
+        videoId: typeof body.videoId === "string" ? body.videoId : undefined
+      });
+
+      const result = await runLessonWorkflowById({ workflowRunId, workerId: baseWorkerId, correlationId });
       if (!result.processed) {
         if (result.reason === "completed" || result.reason === "cancelled") {
+          logger.info("workflow request ignored", { correlationId, workflowRunId, reason: result.reason });
           response.writeHead(204);
           response.end();
           return;
         }
         if (result.reason === "already_running") {
+          logger.info("workflow already running", { correlationId, workflowRunId });
           response.writeHead(409, { "Content-Type": "application/json" });
           response.end(JSON.stringify({ ok: false, error: result.reason }));
           return;
         }
+        logger.error("workflow request not processed", { correlationId, workflowRunId, reason: result.reason || "not_found" });
         response.writeHead(404, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ ok: false, error: result.reason || "not_found" }));
         return;
       }
+
+      logger.info("workflow request processed", { correlationId, workflowRunId });
 
       response.writeHead(204);
       response.end();

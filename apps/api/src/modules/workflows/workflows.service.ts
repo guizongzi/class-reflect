@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { loadAppConfig } from "@class-reflect/config";
+import { createLogger } from "@class-reflect/observability";
 import {
   cancelWorkflowRunForLesson,
   confirmTranscriptReviewForLesson,
@@ -13,6 +14,7 @@ import { workflowStepOptions, type WorkflowStepKey } from "@class-reflect/shared
 @Injectable()
 export class WorkflowsService {
   private readonly config = loadAppConfig();
+  private readonly logger = createLogger("api.workflows");
 
   getLessonStatus(lessonId: string) {
     return getWorkflowStatusForLesson(lessonId);
@@ -50,11 +52,22 @@ export class WorkflowsService {
     }
 
     const taskPath = this.config.workflowTaskPath || "/api/workflows/process";
+    const correlationId = buildWorkflowCorrelationId(workflowRun.id, workflowRun.retryCount);
     const requestBody = {
       workflowRunId: workflowRun.id,
       lessonId: workflowRun.lessonId,
-      videoId: workflowRun.videoId
+      videoId: workflowRun.videoId,
+      correlationId
     };
+
+    this.logger.info("dispatch workflow requested", {
+      correlationId,
+      workflowRunId: workflowRun.id,
+      retryCount: workflowRun.retryCount,
+      lessonId: workflowRun.lessonId,
+      videoId: workflowRun.videoId,
+      channel: this.config.cloudTasksProjectId && this.config.cloudTasksQueue ? "cloud_tasks" : "direct_http"
+    });
 
     if (this.config.cloudTasksProjectId && this.config.cloudTasksQueue) {
       await createCloudTask({
@@ -64,6 +77,12 @@ export class WorkflowsService {
         taskId: `workflow-${workflowRun.id}-retry-${workflowRun.retryCount}`,
         url: new URL(taskPath, workerBaseUrl).toString(),
         body: requestBody
+      });
+      this.logger.info("dispatch workflow enqueued", {
+        correlationId,
+        workflowRunId: workflowRun.id,
+        retryCount: workflowRun.retryCount,
+        taskId: `workflow-${workflowRun.id}-retry-${workflowRun.retryCount}`
       });
       return;
     }
@@ -75,8 +94,21 @@ export class WorkflowsService {
     });
 
     if (!response.ok) {
+      this.logger.error("dispatch workflow failed", {
+        correlationId,
+        workflowRunId: workflowRun.id,
+        retryCount: workflowRun.retryCount,
+        status: response.status
+      });
       throw new Error(`workflow dispatch failed with ${response.status}`);
     }
+
+    this.logger.info("dispatch workflow completed", {
+      correlationId,
+      workflowRunId: workflowRun.id,
+      retryCount: workflowRun.retryCount,
+      channel: "direct_http"
+    });
   }
 }
 
@@ -138,4 +170,8 @@ function parseWorkflowStepKey(body: unknown): WorkflowStepKey | null {
   if (!body || typeof body !== "object") return null;
   const value = (body as { fromStepKey?: unknown }).fromStepKey;
   return workflowStepOptions.some((step) => step.key === value) ? value as WorkflowStepKey : null;
+}
+
+function buildWorkflowCorrelationId(workflowRunId: string, retryCount: number) {
+  return `workflow-${workflowRunId}-retry-${retryCount}`;
 }

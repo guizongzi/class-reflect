@@ -15,6 +15,7 @@
     "@class-reflect/config": "workspace:*",
     "@class-reflect/database": "workspace:*",
     "@class-reflect/domain": "workspace:*",
+    "@class-reflect/observability": "workspace:*",
     "@class-reflect/providers": "workspace:*",
     "@class-reflect/shared-types": "workspace:*",
     "@nestjs/common": "^10.4.15",
