@@ -246,7 +246,8 @@ async function tryRunLlmAgent<T>(input: { promptVersion: string; payload: unknow
       logger.error("ai call returned invalid payload", {
         promptVersion: input.promptVersion,
         payloadSummary: summarizePayload(input.payload),
-        resultSummary: summarizeResult(result)
+        resultSummary: summarizeResult(result),
+        rawResultPreview: JSON.stringify(result).slice(0, 3000)
       });
     return null;
   }
@@ -337,7 +338,6 @@ function summarizeResult(value: unknown) {
   return {
     type: "object",
     keys: Object.keys(candidate).slice(0, 30),
-
     lessonIdType: typeof candidate.lessonId,
     lessonFormatType:
       typeof candidate.lesson_format !== "undefined"
