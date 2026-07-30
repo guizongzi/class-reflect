@@ -136,6 +136,10 @@ importers:
         version: 5.9.3
 
   packages/agents:
+    dependencies:
+      '@class-reflect/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
     devDependencies:
       typescript:
         specifier: ^5.7.3
@@ -199,6 +203,10 @@ importers:
   packages/eslint-config: {}
 
   packages/guardrails:
+    dependencies:
+      '@class-reflect/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
     devDependencies:
       typescript:
         specifier: ^5.7.3
