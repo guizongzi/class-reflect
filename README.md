@@ -172,27 +172,16 @@ pnpm install
 cp .env.example .env
 ```
 
-至少需要填写：
+当前正式代码实际读取的环境变量如下。
+
+本地最小烟测只需要前端能连到 API，并让 ASR 使用 mock：
 
 ```text
-DATABASE_URL
-FRONTEND_ORIGIN
 NEXT_PUBLIC_API_BASE_URL
-R2_ACCOUNT_ID
-R2_ENDPOINT
-R2_BUCKET
-R2_ACCESS_KEY_ID
-R2_SECRET_ACCESS_KEY
 ASR_PROVIDER
-ALIYUN_DASHSCOPE_API_KEY
-ALIYUN_ASR_MODEL
-ALIYUN_ASR_BASE_URL
-LLM_BASE_URL
-LLM_API_KEY
-LLM_MODEL
 ```
 
-本地只做前后端烟测时，可以先使用：
+推荐本地烟测值：
 
 ```text
 ASR_PROVIDER=mock
@@ -200,7 +189,59 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:3000
 FRONTEND_ORIGIN=http://localhost:3001
 ```
 
-真实视频上传和转写需要配置 Cloudflare R2、Supabase/PostgreSQL 和阿里云 DashScope。真实 secret key 只放在本地 `.env` 或云端 Secret Manager，不能提交到仓库。
+真实上传、转写和报告通路需要补齐：
+
+| 变量 | 必填场景 | 示例/说明 |
+| --- | --- | --- |
+| `DATABASE_URL` | API/Worker 读写课堂数据 | Supabase PostgreSQL connection string |
+| `FRONTEND_ORIGIN` | API CORS | 本地 `http://localhost:3001`；云端填 `https://class-reflect-web-113773741484.asia-southeast1.run.app` |
+| `NEXT_PUBLIC_API_BASE_URL` | Web 请求 API | 本地 `http://localhost:3000`；云端构建时填 `https://class-reflect-api-113773741484.asia-southeast1.run.app` |
+| `R2_ACCOUNT_ID` | 真实视频/音频对象存储 | Cloudflare account id |
+| `R2_ENDPOINT` | 真实视频/音频对象存储 | `https://<account-id>.r2.cloudflarestorage.com` |
+| `R2_BUCKET` | 真实视频/音频对象存储 | R2 bucket 名称 |
+| `R2_ACCESS_KEY_ID` | 真实视频/音频对象存储 | R2 S3 API access key |
+| `R2_SECRET_ACCESS_KEY` | 真实视频/音频对象存储 | R2 S3 API secret key |
+| `R2_REGION` | 可选 | 默认 `auto` |
+| `ASR_PROVIDER` | Worker 转写 | 本地烟测 `mock`；真实转写 `aliyun` |
+| `ALIYUN_DASHSCOPE_API_KEY` | `ASR_PROVIDER=aliyun` | DashScope / Model Studio API key |
+| `ALIYUN_ASR_MODEL` | 可选 | 默认 `qwen3-asr-flash-filetrans` |
+| `ALIYUN_ASR_BASE_URL` | 可选 | 默认 `https://dashscope.aliyuncs.com/api/v1` |
+| `ALIYUN_ASR_TIMEOUT_MS` | 可选 | 默认 `600000` |
+| `ALIYUN_ASR_POLL_INTERVAL_MS` | 可选 | 默认 `3000` |
+| `TRANSLATION_PROVIDER` | 可选，按需翻译 | 默认 `mymemory`；可设 `mock` 或 `llm` |
+| `MYMEMORY_EMAIL` | 可选，MyMemory 翻译 | MyMemory 识别调用方用 |
+| `LLM_BASE_URL` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | OpenAI-compatible `/chat/completions` base URL |
+| `LLM_API_KEY` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | LLM API key |
+| `LLM_MODEL` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | 例如 `qwen-plus` |
+| `PORT` | 可选 | Cloud Run 注入 `8080`；本地 API 默认可用 `3000` |
+
+`.env.example` 中若有 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DIRECT_URL`、`PUBLIC_BASE_URL`、`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`FFMPEG_PATH` 等占位项，当前正式 M1 代码不会读取它们。
+
+生产环境通过 Google Secret Manager 的 `APP_CONFIG_ENV` 注入 API 和 Worker。建议内容是一个 JSON 对象：
+
+```json
+{
+  "DATABASE_URL": "postgresql://...",
+  "FRONTEND_ORIGIN": "https://class-reflect-web-113773741484.asia-southeast1.run.app",
+  "R2_ACCOUNT_ID": "...",
+  "R2_ENDPOINT": "https://<account-id>.r2.cloudflarestorage.com",
+  "R2_BUCKET": "class-reflect",
+  "R2_ACCESS_KEY_ID": "...",
+  "R2_SECRET_ACCESS_KEY": "...",
+  "R2_REGION": "auto",
+  "ASR_PROVIDER": "aliyun",
+  "ALIYUN_DASHSCOPE_API_KEY": "...",
+  "ALIYUN_ASR_MODEL": "qwen3-asr-flash-filetrans",
+  "ALIYUN_ASR_BASE_URL": "https://dashscope.aliyuncs.com/api/v1",
+  "ALIYUN_ASR_TIMEOUT_MS": 600000,
+  "ALIYUN_ASR_POLL_INTERVAL_MS": 3000,
+  "TRANSLATION_PROVIDER": "mymemory"
+}
+```
+
+`NEXT_PUBLIC_API_BASE_URL` 是前端构建期变量，不放在 `APP_CONFIG_ENV` 里。Cloud Build 会在构建 Web 镜像时写入 `https://class-reflect-api-113773741484.asia-southeast1.run.app`。
+
+真实 secret key 只放在本地 `.env` 或云端 Secret Manager，不能提交到仓库。
 
 ### 3. 准备数据库
 
@@ -275,7 +316,7 @@ pnpm build
 | Google Cloud Run | API 和 Worker Job |
 | Google Secret Manager | `APP_CONFIG_ENV` |
 | 阿里云 ASR | 文件转写与时间点 |
-| 阿里云 LLM | 候选证据、按需翻译、报告整理 |
+| MyMemory / OpenAI-compatible LLM | 按需翻译；默认使用 MyMemory，只有 `TRANSLATION_PROVIDER=llm` 时才需要 LLM 配置 |
 
 ## 旧实现
 
