@@ -61,7 +61,7 @@ export class WorkflowsService {
         projectId: this.config.cloudTasksProjectId,
         location: this.config.cloudTasksLocation,
         queue: this.config.cloudTasksQueue,
-        taskId: `workflow-${workflowRun.id}`,
+        taskId: `workflow-${workflowRun.id}-retry-${workflowRun.retryCount}`,
         url: new URL(taskPath, workerBaseUrl).toString(),
         body: requestBody
       });
@@ -111,7 +111,9 @@ async function createCloudTask(input: {
 
   if (response.ok) return;
   const text = await response.text();
-  if (response.status === 409 || text.includes("ALREADY_EXISTS")) return;
+  if (response.status === 409 || text.includes("ALREADY_EXISTS")) {
+    throw new Error(`cloud task already exists: ${input.taskId}`);
+  }
   throw new Error(`cloud task creation failed with ${response.status}: ${text}`);
 }
 
