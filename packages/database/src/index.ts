@@ -355,7 +355,7 @@ export async function getTeachingEvidenceSource(input: {
       start_ms,
       end_ms,
       speaker_label,
-      coalesce(raw_original_text, original_text, '') as text,
+      coalesce(original_text, raw_original_text, '') as text,
       confidence
     from transcript_segments
     where lesson_id = $1 and video_id = $2
@@ -456,7 +456,7 @@ export async function listTranscriptSegments(input: {
       start_ms,
       end_ms,
       speaker_label,
-      coalesce(raw_original_text, original_text, '') as text,
+      coalesce(original_text, raw_original_text, '') as text,
       confidence
     from transcript_segments
     where lesson_id = $1 and video_id = $2
@@ -545,6 +545,34 @@ export async function updateLessonSectionText(input: {
   const row = result.rows[0];
   if (!row) return null;
   return mapLessonSectionRow(row);
+}
+
+export async function updateTranscriptSegmentText(input: {
+  lessonId: string;
+  segmentId: string;
+  editedText: string;
+  reviewerId?: string;
+}): Promise<TranscriptSegment | null> {
+  const result = await getPool().query(`
+    update transcript_segments
+    set
+      original_text = $3,
+      reviewer_id = $4,
+      reviewed_at = now(),
+      updated_at = now()
+    where lesson_id = $1 and id = $2
+    returning id, start_ms, end_ms, speaker_label, original_text, confidence
+  `, [input.lessonId, input.segmentId, input.editedText, input.reviewerId || "demo-teacher"]);
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    startMs: Number(row.start_ms || 0),
+    endMs: Number(row.end_ms || 0),
+    speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
+    text: String(row.original_text || ""),
+    confidence: row.confidence == null ? null : Number(row.confidence)
+  };
 }
 
 export async function saveClassroomEvents(input: {
@@ -814,7 +842,7 @@ export async function getTranslationTarget(input: {
     select
       id,
       lesson_id,
-      coalesce(raw_original_text, original_text, '') as original_text,
+      coalesce(original_text, raw_original_text, '') as original_text,
       translated_text
     from transcript_segments
     where lesson_id = $1 and id = $2
@@ -864,7 +892,7 @@ export async function saveTranslationResult(input: {
     returning
       id,
       lesson_id,
-      coalesce(raw_original_text, original_text, '') as original_text,
+      coalesce(original_text, raw_original_text, '') as original_text,
       translated_text
   `, [input.lessonId, input.targetId, input.translatedText]);
   const row = result.rows[0];
@@ -1090,6 +1118,7 @@ export async function retryWorkflowRunForLesson(input: {
   const fromStepKey = input.fromStepKey || fallbackStep || current.task.currentStep || "upload_video";
   const fromIndex = Math.max(workflowStepOptions.findIndex((step) => step.key === fromStepKey), 0);
   const resetStepKeys = workflowStepOptions.slice(fromIndex).map((step) => step.key);
+  const humanReviewIndex = workflowStepOptions.findIndex((step) => step.key === "wait_human_review");
 
   await getPool().query(`
     update workflow_runs
@@ -1121,6 +1150,19 @@ export async function retryWorkflowRunForLesson(input: {
     where workflow_run_id = $1
       and step_key = any($2::text[])
   `, [current.task.id, resetStepKeys]);
+  if (fromIndex > humanReviewIndex) {
+    await getPool().query(`
+      update workflow_step_runs
+      set
+        status = 'completed',
+        progress = 100,
+        error_message = null,
+        finished_at = coalesce(finished_at, now()),
+        updated_at = now()
+      where workflow_run_id = $1
+        and step_key = 'wait_human_review'
+    `, [current.task.id]);
+  }
   return getWorkflowStatusForLesson(input.lessonId);
 }
 

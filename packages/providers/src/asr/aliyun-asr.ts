@@ -56,7 +56,9 @@ async function waitForAliyunTranscription(taskId: string) {
     });
     const output = response.output || {};
     if (output.task_status === "SUCCEEDED") {
-      const resultUrl = output.result?.transcription_url;
+      const resultUrl = output.result?.transcription_url
+        || output.transcription_url
+        || output.results?.[0]?.transcription_url;
       if (!resultUrl) throw new Error("阿里云 ASR 成功但没有返回 transcription_url");
       return String(resultUrl);
     }

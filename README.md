@@ -177,7 +177,7 @@ cp .env.example .env
 本地最小烟测只需要前端能连到 API，并让 ASR 使用 mock：
 
 ```text
-NEXT_PUBLIC_API_BASE_URL
+API_BASE_URL
 ASR_PROVIDER
 ```
 
@@ -185,8 +185,8 @@ ASR_PROVIDER
 
 ```text
 ASR_PROVIDER=mock
-NEXT_PUBLIC_API_BASE_URL=http://localhost:3000
-FRONTEND_ORIGIN=http://localhost:3001
+API_BASE_URL=http://localhost:3001
+FRONTEND_ORIGIN=http://localhost:3000
 ```
 
 真实上传、转写和报告通路需要补齐：
@@ -194,8 +194,9 @@ FRONTEND_ORIGIN=http://localhost:3001
 | 变量 | 必填场景 | 示例/说明 |
 | --- | --- | --- |
 | `DATABASE_URL` | API/Worker 读写课堂数据 | Supabase PostgreSQL connection string |
-| `FRONTEND_ORIGIN` | API CORS | 本地 `http://localhost:3001`；云端填 `https://class-reflect-web-113773741484.asia-southeast1.run.app` |
-| `NEXT_PUBLIC_API_BASE_URL` | Web 请求 API | 本地 `http://localhost:3000`；云端构建时填 `https://class-reflect-api-113773741484.asia-southeast1.run.app` |
+| `FRONTEND_ORIGIN` | API CORS | 本地 `http://localhost:3000`；云端填 `https://class-reflect-web-113773741484.asia-southeast1.run.app` |
+| `API_BASE_URL` | Web 服务端转发 API | 本地 `http://localhost:3001`；云端 Web 服务填 `https://class-reflect-api-113773741484.asia-southeast1.run.app` |
+| `NEXT_PUBLIC_API_BASE_URL` | 可选，浏览器直连 API | 留空时使用 Web 同源 `/api/*` 转发；需要绕过 Web 转发时才填写 |
 | `R2_ACCOUNT_ID` | 真实视频/音频对象存储 | Cloudflare account id |
 | `R2_ENDPOINT` | 真实视频/音频对象存储 | `https://<account-id>.r2.cloudflarestorage.com` |
 | `R2_BUCKET` | 真实视频/音频对象存储 | R2 bucket 名称 |
@@ -239,7 +240,7 @@ FRONTEND_ORIGIN=http://localhost:3001
 }
 ```
 
-`NEXT_PUBLIC_API_BASE_URL` 是前端构建期变量，不放在 `APP_CONFIG_ENV` 里。Cloud Build 会在构建 Web 镜像时写入 `https://class-reflect-api-113773741484.asia-southeast1.run.app`。
+Web 默认使用同源 `/api/*` 转发到后端。Cloud Run 上建议给 `class-reflect-web` 设置 `API_BASE_URL=https://class-reflect-api-113773741484.asia-southeast1.run.app`，本地则设置 `API_BASE_URL=http://localhost:3001`。`NEXT_PUBLIC_API_BASE_URL` 是可选的前端构建期变量，只有希望浏览器直接请求 API 时才填写。
 
 真实 secret key 只放在本地 `.env` 或云端 Secret Manager，不能提交到仓库。
 
@@ -275,8 +276,8 @@ pnpm dev
 默认端口：
 
 ```text
-API: http://localhost:3000
-Web: Next.js dev server 输出的本地地址，通常是 http://localhost:3001
+Web: http://localhost:3000
+API: http://localhost:3001
 ```
 
 ### 5. 本地烟测
@@ -284,6 +285,7 @@ Web: Next.js dev server 输出的本地地址，通常是 http://localhost:3001
 检查 API：
 
 ```bash
+curl http://localhost:3001/api/health
 curl http://localhost:3000/api/health
 ```
 

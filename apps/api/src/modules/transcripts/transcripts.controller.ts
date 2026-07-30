@@ -14,4 +14,13 @@ export class TranscriptsController {
   ) {
     return this.transcripts.updateSection(lessonId, sectionId, UpdateLessonSectionRequestSchema.parse(body));
   }
+
+  @Patch("segments/:segmentId")
+  updateSegment(
+    @Param("lessonId") lessonId: string,
+    @Param("segmentId") segmentId: string,
+    @Body() body: unknown
+  ) {
+    return this.transcripts.updateSegment(lessonId, segmentId, UpdateLessonSectionRequestSchema.parse(body));
+  }
 }

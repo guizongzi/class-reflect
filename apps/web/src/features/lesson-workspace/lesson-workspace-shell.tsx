@@ -197,16 +197,20 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
     }
   }
 
-  async function saveSection(item: LessonTextItem) {
-    if (!activeLessonId || item.targetType !== "section") return;
+  async function saveLessonText(item: LessonTextItem) {
+    if (!activeLessonId) return;
     const editedSummaryText = editingTextById[item.id] || item.originalText;
     setSavingSectionId(item.id);
     setTranslationError(null);
     try {
-      const result = await patchJson<{ section?: { summaryText?: string } }>(`/api/lessons/${activeLessonId}/transcripts/sections/${item.id}`, {
+      const targetPath = item.targetType === "section" ? "sections" : "segments";
+      const result = await patchJson<{
+        section?: { summaryText?: string };
+        segment?: { text?: string; originalText?: string };
+      }>(`/api/lessons/${activeLessonId}/transcripts/${targetPath}/${item.id}`, {
         editedSummaryText
       });
-      const savedText = result.section?.summaryText || editedSummaryText;
+      const savedText = result.section?.summaryText || result.segment?.text || result.segment?.originalText || editedSummaryText;
       setLessonTexts((items) => items.map((current) => current.id === item.id ? { ...current, originalText: savedText } : current));
       setEditingTextById((drafts) => ({ ...drafts, [item.id]: savedText }));
     } catch (error) {
@@ -484,24 +488,20 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
                   {item.translatedText ? <em>{item.translatedText}</em> : null}
                 </button>
                 <div className="transcript-actions">
-                  {item.targetType === "section" ? (
-                    <textarea
-                      aria-label="校订课堂记录"
-                      value={editingTextById[item.id] ?? item.originalText}
-                      onChange={(event) => setEditingTextById((drafts) => ({ ...drafts, [item.id]: event.target.value }))}
-                    />
-                  ) : null}
+                  <textarea
+                    aria-label="校订课堂记录"
+                    value={editingTextById[item.id] ?? item.originalText}
+                    onChange={(event) => setEditingTextById((drafts) => ({ ...drafts, [item.id]: event.target.value }))}
+                  />
                   <div>
-                    {item.targetType === "section" ? (
-                      <button
-                        className="ghost-button compact-button"
-                        disabled={savingSectionId === item.id}
-                        onClick={() => void saveSection(item)}
-                        type="button"
-                      >
-                        {savingSectionId === item.id ? "保存中" : "保存校订"}
-                      </button>
-                    ) : null}
+                    <button
+                      className="ghost-button compact-button"
+                      disabled={savingSectionId === item.id}
+                      onClick={() => void saveLessonText(item)}
+                      type="button"
+                    >
+                      {savingSectionId === item.id ? "保存中" : "保存校订"}
+                    </button>
                     <button
                       className="ghost-button compact-button"
                       disabled={translatingId === item.id}
@@ -669,8 +669,7 @@ function ProgressItem({ label, progress }: { label: string; progress: number }) 
 
 function buildLessonTextItems(detail: LessonDetailResponse): LessonTextItem[] {
   const sections = Array.isArray(detail.sections) ? detail.sections : [];
-  if (sections.length) {
-    return sections.map((section, index): LessonTextItem => ({
+  const sectionItems = sections.map((section, index): LessonTextItem => ({
       id: stringValue(section.id),
       targetType: "section",
       startMs: numberValue(section.start_ms ?? section.startMs),
@@ -679,18 +678,21 @@ function buildLessonTextItems(detail: LessonDetailResponse): LessonTextItem[] {
       originalText: stringValue(section.edited_summary_text ?? section.editedSummaryText ?? section.summary_text ?? section.summaryText),
       translatedText: nullableString(section.translated_summary_text ?? section.translatedSummaryText)
     })).filter((item) => item.id && item.originalText);
-  }
 
   const segments = Array.isArray(detail.transcriptSegments) ? detail.transcriptSegments : [];
-  return segments.map((segment, index): LessonTextItem => ({
+  const segmentItems = segments.map((segment, index): LessonTextItem => ({
     id: stringValue(segment.id),
     targetType: "segment",
     startMs: numberValue(segment.start_ms ?? segment.startMs),
     endMs: numberValue(segment.end_ms ?? segment.endMs),
-    title: stringValue(segment.speaker_label ?? segment.speakerLabel) || `说话片段 ${index + 1}`,
+    title: `${stringValue(segment.speaker_label ?? segment.speakerLabel) || `说话片段 ${index + 1}`} · 逐字稿`,
     originalText: stringValue(segment.original_text ?? segment.originalText),
     translatedText: nullableString(segment.translated_text ?? segment.translatedText)
   })).filter((item) => item.id && item.originalText);
+
+  return [...sectionItems, ...segmentItems].sort((a, b) => a.startMs - b.startMs || (
+    a.targetType === "section" ? -1 : 1
+  ));
 }
 
 function normalizeEvidenceCards(value: unknown): EvidenceCardItem[] {
