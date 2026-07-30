@@ -81,7 +81,6 @@ export function LessonLibrary() {
           <button className="ghost-button" disabled={isRefreshing} onClick={() => void loadLessons({ quiet: true })} type="button">
             {isRefreshing ? "刷新中" : "刷新状态"}
           </button>
-          <Link className="primary-button" href="/lessons/new">上传新视频</Link>
         </div>
       </header>
       <section className="library-panel">
