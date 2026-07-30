@@ -9,6 +9,9 @@
     "check": "tsc --noEmit",
     "build": "tsc -p tsconfig.json"
   },
+  "dependencies": {
+    "@class-reflect/shared-types": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.7.3"
   }

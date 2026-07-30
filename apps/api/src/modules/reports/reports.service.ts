@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import type { UpdateReportRequest } from "@class-reflect/api-contracts";
 import {
   getLessonRecord,
+  listClassroomMetrics,
   listReportRecords,
   listTeachingEvidenceCards,
   saveReportRecord,
@@ -20,6 +21,7 @@ export class ReportsService {
     const detail = await getLessonRecord(lessonId);
     if (!detail) throw new NotFoundException("lesson not found");
     const evidenceCards = await listTeachingEvidenceCards(lessonId);
+    const metrics = await listClassroomMetrics({ lessonId });
     const report = buildReportFromAcceptedEvidence({
       lesson: {
         id: detail.lesson.id,
@@ -30,7 +32,8 @@ export class ReportsService {
           : "offline_classroom_recording",
         status: detail.lesson.status as WorkflowStatus
       },
-      evidenceCards
+      evidenceCards,
+      metrics
     });
     const saved = await saveReportRecord({
       lessonId,

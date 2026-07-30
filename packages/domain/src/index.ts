@@ -1,5 +1,5 @@
 import type { CreateLessonRequest } from "@class-reflect/api-contracts";
-import type { ClassroomEvent, LessonFormat, LessonSection, Report, TeachingEvidenceCard, TranscriptSegment, WorkflowStatus } from "@class-reflect/shared-types";
+import type { ClassroomEvent, ClassroomMetric, LessonFormat, LessonSection, Report, TeachingEvidenceCard, TranscriptSegment, WorkflowStatus } from "@class-reflect/shared-types";
 
 export type Lesson = {
   id: string;
@@ -99,8 +99,13 @@ export function detectClassroomEvents(transcriptSegments: TranscriptSegment[]): 
 export function buildReportFromAcceptedEvidence(input: {
   lesson: Lesson;
   evidenceCards: TeachingEvidenceCard[];
+  metrics?: ClassroomMetric[];
 }): Report {
   const accepted = input.evidenceCards.filter((card) => ["accepted", "edited_and_accepted"].includes(card.reviewStatus));
+  const metrics = input.metrics || [];
+  const metricsSummary = metrics.length
+    ? metrics.map((metric) => `- ${metric.name}：${formatMetricValue(metric)}${formatMetricDetail(metric)}`).join("\n")
+    : "- 暂无已计算的确定性课堂指标。请先完成转写和 calculate_metrics 步骤。";
   const findings = accepted.length
     ? accepted.map((card, index) => [
       `### ${index + 1}. ${card.title}`,
@@ -138,7 +143,9 @@ export function buildReportFromAcceptedEvidence(input: {
       "",
       "## 4. 课堂结构与关键指标",
       "",
-      "当前版本保留基础指标位置，后续可接入更多确定性指标。",
+      "以下内容来自确定性 Metrics Engine，不交给 LLM 计数；信息密度只输出可观察提示，不输出黑箱总分。",
+      "",
+      metricsSummary,
       "",
       "## 5. 教师确认的主要发现",
       "",
@@ -159,9 +166,40 @@ export function buildReportFromAcceptedEvidence(input: {
     generatedFrom: {
       acceptedEvidenceCardIds: accepted.map((card) => card.id),
       evidenceCount: accepted.length,
+      metricIds: metrics.map((metric) => metric.id),
+      metricCount: metrics.length,
       policy: "accepted_or_edited_and_accepted_only"
     }
   };
+}
+
+function formatMetricValue(metric: ClassroomMetric) {
+  if (metric.unit === "chars_per_minute") return `${metric.value} 字/分钟`;
+  if (metric.unit === "seconds") return `${metric.value} 秒`;
+  if (metric.unit === "percent") return `${metric.value}%`;
+  if (metric.unit === "count") return `${metric.value} 次`;
+  return `${metric.value}${metric.unit ? ` ${metric.unit}` : ""}`;
+}
+
+function formatMetricDetail(metric: ClassroomMetric) {
+  const metadata = metric.metadata || {};
+  if (metric.name === "长停顿次数" && typeof metadata.maxPauseSeconds === "number") {
+    return `，最长停顿 ${metadata.maxPauseSeconds} 秒`;
+  }
+  if (metric.name === "问题后平均等待时间" && typeof metadata.measuredQuestionCount === "number") {
+    return `，有效测量问题 ${metadata.measuredQuestionCount} 个`;
+  }
+  if (metric.name === "学生回答或齐答次数" && typeof metadata.choralResponseCount === "number") {
+    return `，其中齐答线索 ${metadata.choralResponseCount} 次`;
+  }
+  if (metric.name === "信息密度提示" && Array.isArray(metadata.signals) && metadata.signals.length) {
+    const first = metadata.signals[0] as { reason?: string };
+    return first.reason ? `，首要提示：${first.reason}` : "";
+  }
+  if (metric.unit === "percent" && typeof metadata.durationSeconds === "number") {
+    return `，约 ${metadata.durationSeconds} 秒`;
+  }
+  return "";
 }
 
 function makeSection(segments: TranscriptSegment[], index: number): LessonSection {

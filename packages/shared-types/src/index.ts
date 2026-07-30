@@ -175,6 +175,7 @@ export type ClassroomMetric = {
   value: number;
   unit?: string;
   segmentIds?: string[];
+  metadata?: Record<string, unknown>;
 };
 
 export type ClassroomEvent = {

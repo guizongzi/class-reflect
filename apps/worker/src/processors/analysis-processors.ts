@@ -1,15 +1,17 @@
 import { runTeachingEvidenceAgent, runTranscriptNormalizer } from "@class-reflect/agents";
 import {
   getTeachingEvidenceSource,
+  getLessonRecord,
   listClassroomEvents,
   listTranscriptSegments,
   saveClassroomEvents,
+  saveClassroomMetrics,
   saveLessonSections,
   saveTeachingEvidenceCards
 } from "@class-reflect/database";
 import { buildLessonSections, detectClassroomEvents } from "@class-reflect/domain";
 import { assertEvidenceHasSource, validateTeachingEvidenceCard } from "@class-reflect/guardrails";
-import { calculateSpeechRate } from "@class-reflect/metrics";
+import { calculateDeterministicClassroomMetrics } from "@class-reflect/metrics";
 import { capabilityMatrixByLessonFormat } from "@class-reflect/shared-types";
 import type { ProcessorResult, WorkflowProcessor } from "./types";
 
@@ -55,9 +57,43 @@ export const buildSectionsProcessor: WorkflowProcessor = {
 
 export const calculateMetricsProcessor: WorkflowProcessor = {
   stepKey: "calculate_metrics",
-  async run(): Promise<ProcessorResult> {
-    const speechRate = calculateSpeechRate([]);
-    return { output: { speechRate } };
+  async run(context): Promise<ProcessorResult> {
+    const transcriptSegments = await listTranscriptSegments({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId
+    });
+    if (!transcriptSegments.length) throw new Error("还没有可用于计算课堂指标的逐字稿");
+
+    const lessonDetail = await getLessonRecord(context.workflow.lessonId);
+    const lessonSections = (lessonDetail?.sections || []).map((section) => {
+      const row = section as Record<string, unknown>;
+      return {
+        id: String(row.id || ""),
+        lessonId: context.workflow.lessonId,
+        videoId: context.workflow.videoId,
+        startMs: Number(row.start_ms || row.startMs || 0),
+        endMs: Number(row.end_ms || row.endMs || 0),
+        title: String(row.title || "课堂片段"),
+        summaryText: String(row.edited_summary_text || row.summary_text || row.summaryText || ""),
+        confidenceLabel: String(row.confidence_label || row.confidenceLabel || ""),
+        tags: Array.isArray(row.tags) ? row.tags.map(String) : []
+      };
+    });
+    const metrics = calculateDeterministicClassroomMetrics({
+      transcriptSegments,
+      lessonSections
+    });
+    const savedMetrics = await saveClassroomMetrics({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId,
+      metrics
+    });
+    return {
+      output: {
+        metricCount: savedMetrics.length,
+        metricNames: savedMetrics.map((metric) => metric.name)
+      }
+    };
   }
 };
 

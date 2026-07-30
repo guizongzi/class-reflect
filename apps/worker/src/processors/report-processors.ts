@@ -1,5 +1,6 @@
 import {
   getLessonRecord,
+  listClassroomMetrics,
   listTeachingEvidenceCards,
   saveReportRecord,
   updateWorkflowRunStatus
@@ -22,6 +23,7 @@ export const generateReportProcessor: WorkflowProcessor = {
     const detail = await getLessonRecord(context.workflow.lessonId);
     if (!detail) throw new Error(`课堂记录不存在：${context.workflow.lessonId}`);
     const evidenceCards = await listTeachingEvidenceCards(context.workflow.lessonId);
+    const metrics = await listClassroomMetrics({ lessonId: context.workflow.lessonId });
     const report = buildReportFromAcceptedEvidence({
       lesson: {
         id: detail.lesson.id,
@@ -32,7 +34,8 @@ export const generateReportProcessor: WorkflowProcessor = {
           : "offline_classroom_recording",
         status: detail.lesson.status as never
       },
-      evidenceCards
+      evidenceCards,
+      metrics
     });
     const saved = await saveReportRecord({
       lessonId: context.workflow.lessonId,
@@ -42,7 +45,8 @@ export const generateReportProcessor: WorkflowProcessor = {
     return {
       output: {
         reportId: saved.id,
-        acceptedEvidenceCount: Number(saved.generatedFrom.evidenceCount || 0)
+        acceptedEvidenceCount: Number(saved.generatedFrom.evidenceCount || 0),
+        metricCount: Number(saved.generatedFrom.metricCount || 0)
       },
       warnings: Number(saved.generatedFrom.evidenceCount || 0) === 0 ? ["no_accepted_evidence_for_report"] : []
     };

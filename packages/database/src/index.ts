@@ -361,6 +361,10 @@ export async function getTeachingEvidenceSource(input: {
     where lesson_id = $1 and video_id = $2
     order by start_ms
   `, [input.lessonId, input.videoId]);
+  const metrics = await listClassroomMetrics({
+    lessonId: input.lessonId,
+    videoId: input.videoId
+  });
 
   return {
     lesson: {
@@ -375,7 +379,7 @@ export async function getTeachingEvidenceSource(input: {
       text: String(row.text || ""),
       confidence: row.confidence == null ? null : Number(row.confidence)
     })),
-    metrics: []
+    metrics
   };
 }
 
@@ -389,6 +393,7 @@ export async function saveTranscriptSegments(input: {
     await client.query("begin");
     await client.query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from classroom_events where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+    await client.query("delete from classroom_metrics where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from transcript_segments where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
 
@@ -594,6 +599,59 @@ export async function listClassroomEvents(input: {
     order by start_ms, created_at
   `, params);
   return result.rows.map(mapClassroomEventRow);
+}
+
+export async function saveClassroomMetrics(input: {
+  lessonId: string;
+  videoId: string;
+  metrics: ClassroomMetric[];
+}): Promise<ClassroomMetric[]> {
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    await client.query("delete from classroom_metrics where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+    const saved: ClassroomMetric[] = [];
+    for (const metric of input.metrics) {
+      const result = await client.query(`
+        insert into classroom_metrics
+          (lesson_id, video_id, metric_key, name, value, unit, segment_ids, metadata)
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+        returning *
+      `, [
+        input.lessonId,
+        input.videoId,
+        metric.id,
+        metric.name,
+        metric.value,
+        metric.unit || null,
+        JSON.stringify(metric.segmentIds || []),
+        JSON.stringify(metric.metadata || {})
+      ]);
+      saved.push(mapClassroomMetricRow(result.rows[0]));
+    }
+    await client.query("commit");
+    return saved;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listClassroomMetrics(input: {
+  lessonId: string;
+  videoId?: string;
+}): Promise<ClassroomMetric[]> {
+  const params = input.videoId ? [input.lessonId, input.videoId] : [input.lessonId];
+  const result = await getPool().query(`
+    select *
+    from classroom_metrics
+    where lesson_id = $1
+      ${input.videoId ? "and video_id = $2" : ""}
+    order by metric_key, created_at
+  `, params);
+  return result.rows.map(mapClassroomMetricRow);
 }
 
 export async function reviewEvidenceCardRecord(input: {
@@ -1244,6 +1302,18 @@ function mapClassroomEventRow(row: Record<string, unknown>): ClassroomEvent {
     transcriptSegmentIds: transcriptIds.map(String),
     quote: row.quote_text == null ? undefined : String(row.quote_text),
     confidenceLabel: row.confidence_label == null ? undefined : String(row.confidence_label),
+    metadata: parseJsonRecord(row.metadata)
+  };
+}
+
+function mapClassroomMetricRow(row: Record<string, unknown>): ClassroomMetric {
+  const segmentIds = Array.isArray(row.segment_ids) ? row.segment_ids : [];
+  return {
+    id: String(row.metric_key || row.id),
+    name: String(row.name || row.metric_key || ""),
+    value: Number(row.value || 0),
+    unit: row.unit == null ? undefined : String(row.unit),
+    segmentIds: segmentIds.map(String),
     metadata: parseJsonRecord(row.metadata)
   };
 }
