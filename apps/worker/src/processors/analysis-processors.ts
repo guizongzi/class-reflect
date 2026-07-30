@@ -1,8 +1,11 @@
 import { runTeachingEvidenceAgent, runTranscriptNormalizer } from "@class-reflect/agents";
 import {
   getTeachingEvidenceSource,
+  listTranscriptSegments,
+  saveLessonSections,
   saveTeachingEvidenceCards
 } from "@class-reflect/database";
+import { buildLessonSections } from "@class-reflect/domain";
 import { assertEvidenceHasSource, validateTeachingEvidenceCard } from "@class-reflect/guardrails";
 import { calculateSpeechRate } from "@class-reflect/metrics";
 import { capabilityMatrixByLessonFormat } from "@class-reflect/shared-types";
@@ -24,8 +27,27 @@ export const normalizeTranscriptProcessor: WorkflowProcessor = {
 
 export const buildSectionsProcessor: WorkflowProcessor = {
   stepKey: "build_sections",
-  async run(): Promise<ProcessorResult> {
-    throw new Error("build_sections processor not implemented: 需要 lesson_sections repository");
+  async run(context): Promise<ProcessorResult> {
+    const transcriptSegments = await listTranscriptSegments({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId
+    });
+    if (!transcriptSegments.length) throw new Error("还没有可用于生成大段课堂记录的逐字稿");
+
+    const sections = buildLessonSections(transcriptSegments);
+    const savedSections = await saveLessonSections({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId,
+      sections
+    });
+
+    return {
+      output: {
+        sectionCount: savedSections.length,
+        firstSectionId: savedSections[0]?.id || null,
+        lastSectionId: savedSections[savedSections.length - 1]?.id || null
+      }
+    };
   }
 };
 

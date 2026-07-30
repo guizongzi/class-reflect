@@ -73,6 +73,7 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
     }
 
     status = await getWorkflowStatusForLesson(workflow.lessonId);
+    const currentWorkflow = status.task || workflow;
     const stepState = status.steps.find((item) => item.stepKey === step.key);
     if (stepState?.status === "completed" || stepState?.status === "skipped") continue;
 
@@ -103,7 +104,7 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
     });
 
     try {
-      const context: ProcessorContext = { workflow, steps: status.steps };
+      const context: ProcessorContext = { workflow: currentWorkflow, steps: status.steps };
       const result = await processor.run(context);
       await updateWorkflowStep({
         workflowRunId: workflow.id,

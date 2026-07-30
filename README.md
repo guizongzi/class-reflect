@@ -166,7 +166,7 @@ curl http://localhost:3000/api/health
 6. 查看课堂详情、workflow 进度和候选证据
 ```
 
-当前 M1 正式骨架中，R2 上传、ASR Provider 入口、基础指标、Guardrail、教学证据生成 Agent 已接入；`persist_transcript`、`build_sections`、`detect_events`、`generate_report`、`export_report` 仍是后续要补齐的处理器。因此本地可以做服务联通和部分链路测试，完整“真实 ASR 写库到报告导出”还不是全自动闭环。
+当前 M1 正式骨架中，R2 上传、ASR Provider 入口、ASR 逐字稿入库、大段课堂记录生成、基础指标、Guardrail、教学证据生成 Agent 已接入；`detect_events`、`generate_report`、`export_report` 仍是后续要补齐的处理器。因此本地已经可以测试到“ASR 写库 → 分段 → 生成候选教学证据”，完整报告导出还不是全自动闭环。
 
 检查和构建：
 

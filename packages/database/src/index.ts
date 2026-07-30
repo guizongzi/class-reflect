@@ -2,6 +2,7 @@ import { loadAppConfig } from "@class-reflect/config";
 import {
   workflowStepOptions,
   type ClassroomMetric,
+  type LessonSection,
   type LessonFormat,
   type TeachingEvidenceCard,
   type TranscriptSegment,
@@ -117,6 +118,16 @@ export type TeachingEvidenceSourceRecord = {
   };
   transcriptSegments: TranscriptSegment[];
   metrics: ClassroomMetric[];
+};
+
+export type PersistTranscriptSegmentInput = {
+  startMs: number;
+  endMs: number;
+  text: string;
+  speakerId?: string | number | null;
+  speakerLabel?: string | null;
+  confidence?: number | null;
+  sourceMeta?: Record<string, unknown>;
 };
 
 let pool: Pool | null = null;
@@ -363,6 +374,146 @@ export async function getTeachingEvidenceSource(input: {
     })),
     metrics: []
   };
+}
+
+export async function saveTranscriptSegments(input: {
+  lessonId: string;
+  videoId: string;
+  segments: PersistTranscriptSegmentInput[];
+}): Promise<TranscriptSegment[]> {
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    await client.query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+    await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+    await client.query("delete from transcript_segments where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+
+    const saved: TranscriptSegment[] = [];
+    for (const segment of input.segments) {
+      const result = await client.query(`
+        insert into transcript_segments
+          (
+            lesson_id,
+            video_id,
+            start_ms,
+            end_ms,
+            speaker_label,
+            original_text,
+            raw_original_text,
+            translated_text,
+            raw_translated_text,
+            confidence,
+            source
+          )
+        values ($1, $2, $3, $4, $5, $6, $6, null, null, $7, 'asr')
+        returning id, start_ms, end_ms, speaker_label, original_text, confidence
+      `, [
+        input.lessonId,
+        input.videoId,
+        segment.startMs,
+        segment.endMs,
+        segment.speakerLabel || formatSpeakerLabel(segment.speakerId),
+        segment.text,
+        segment.confidence ?? null
+      ]);
+      const row = result.rows[0];
+      saved.push({
+        id: String(row.id),
+        startMs: Number(row.start_ms || 0),
+        endMs: Number(row.end_ms || 0),
+        speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
+        text: String(row.original_text || ""),
+        confidence: row.confidence == null ? null : Number(row.confidence)
+      });
+    }
+    await client.query("update lessons set updated_at = now() where id = $1", [input.lessonId]);
+    await client.query("commit");
+    return saved;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listTranscriptSegments(input: {
+  lessonId: string;
+  videoId: string;
+}): Promise<TranscriptSegment[]> {
+  const result = await getPool().query(`
+    select
+      id,
+      start_ms,
+      end_ms,
+      speaker_label,
+      coalesce(raw_original_text, original_text, '') as text,
+      confidence
+    from transcript_segments
+    where lesson_id = $1 and video_id = $2
+    order by start_ms
+  `, [input.lessonId, input.videoId]);
+
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    startMs: Number(row.start_ms || 0),
+    endMs: Number(row.end_ms || 0),
+    speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
+    text: String(row.text || ""),
+    confidence: row.confidence == null ? null : Number(row.confidence)
+  }));
+}
+
+export async function saveLessonSections(input: {
+  lessonId: string;
+  videoId: string;
+  sections: LessonSection[];
+}): Promise<LessonSection[]> {
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    await client.query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+    await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
+
+    const saved: LessonSection[] = [];
+    for (const section of input.sections) {
+      const result = await client.query(`
+        insert into lesson_sections
+          (lesson_id, video_id, start_ms, end_ms, title, summary_text, confidence_label, tags)
+        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+        returning id, lesson_id, video_id, start_ms, end_ms, title, summary_text, confidence_label, tags
+      `, [
+        input.lessonId,
+        input.videoId,
+        section.startMs,
+        section.endMs,
+        section.title,
+        section.summaryText,
+        section.confidenceLabel,
+        JSON.stringify(section.tags)
+      ]);
+      const row = result.rows[0];
+      saved.push({
+        id: String(row.id),
+        lessonId: String(row.lesson_id),
+        videoId: String(row.video_id),
+        startMs: Number(row.start_ms || 0),
+        endMs: Number(row.end_ms || 0),
+        title: String(row.title || ""),
+        summaryText: String(row.summary_text || ""),
+        confidenceLabel: String(row.confidence_label || ""),
+        tags: Array.isArray(row.tags) ? row.tags.map(String) : []
+      });
+    }
+    await client.query("update lessons set updated_at = now() where id = $1", [input.lessonId]);
+    await client.query("commit");
+    return saved;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function saveTeachingEvidenceCards(input: {
@@ -944,6 +1095,15 @@ function parseJsonRecord(value: unknown): Record<string, unknown> {
 function normalizeLessonFormat(value: unknown): LessonFormat {
   if (value === "live_online_class" || value === "recorded_online_class" || value === "offline_classroom_recording") return value;
   return "offline_classroom_recording";
+}
+
+function formatSpeakerLabel(speakerId: string | number | null | undefined) {
+  if (speakerId == null || speakerId === "") return "未知";
+  const numeric = Number(speakerId);
+  if (Number.isInteger(numeric) && numeric >= 0 && numeric < 26) {
+    return `说话人 ${String.fromCharCode(65 + numeric)}`;
+  }
+  return `说话人 ${speakerId}`;
 }
 
 function mapLessonVideoRow(row: Record<string, unknown>): LessonVideoRecord {

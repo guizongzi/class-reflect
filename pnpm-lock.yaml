@@ -109,6 +109,9 @@ importers:
       '@class-reflect/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@class-reflect/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@class-reflect/guardrails':
         specifier: workspace:*
         version: link:../../packages/guardrails
