@@ -1,3 +1,9 @@
+steps:
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: ['version']
+options:
+  default_logs_bucket_behavior: 'REGIONAL_USER_OWNED_BUCKET'
+  
 substitutions:
   _REGION: asia-southeast1
   _REPOSITORY: class-reflect
