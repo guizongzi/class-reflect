@@ -1,8 +1,13 @@
 import { runTeachingEvidenceAgent, runTranscriptNormalizer } from "@class-reflect/agents";
 import {
   getTeachingEvidenceSource,
+  listClassroomEvents,
+  listTranscriptSegments,
+  saveClassroomEvents,
+  saveLessonSections,
   saveTeachingEvidenceCards
 } from "@class-reflect/database";
+import { buildLessonSections, detectClassroomEvents } from "@class-reflect/domain";
 import { assertEvidenceHasSource, validateTeachingEvidenceCard } from "@class-reflect/guardrails";
 import { calculateSpeechRate } from "@class-reflect/metrics";
 import { capabilityMatrixByLessonFormat } from "@class-reflect/shared-types";
@@ -24,8 +29,27 @@ export const normalizeTranscriptProcessor: WorkflowProcessor = {
 
 export const buildSectionsProcessor: WorkflowProcessor = {
   stepKey: "build_sections",
-  async run(): Promise<ProcessorResult> {
-    throw new Error("build_sections processor not implemented: 需要 lesson_sections repository");
+  async run(context): Promise<ProcessorResult> {
+    const transcriptSegments = await listTranscriptSegments({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId
+    });
+    if (!transcriptSegments.length) throw new Error("还没有可用于生成大段课堂记录的逐字稿");
+
+    const sections = buildLessonSections(transcriptSegments);
+    const savedSections = await saveLessonSections({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId,
+      sections
+    });
+
+    return {
+      output: {
+        sectionCount: savedSections.length,
+        firstSectionId: savedSections[0]?.id || null,
+        lastSectionId: savedSections[savedSections.length - 1]?.id || null
+      }
+    };
   }
 };
 
@@ -39,8 +63,26 @@ export const calculateMetricsProcessor: WorkflowProcessor = {
 
 export const detectEventsProcessor: WorkflowProcessor = {
   stepKey: "detect_events",
-  async run(): Promise<ProcessorResult> {
-    throw new Error("detect_events processor not implemented: 需要课堂事件 Agent 和事件 repository");
+  async run(context): Promise<ProcessorResult> {
+    const transcriptSegments = await listTranscriptSegments({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId
+    });
+    if (!transcriptSegments.length) {
+      return { output: { eventCount: 0 }, warnings: ["no_transcript_for_event_detection"] };
+    }
+    const events = detectClassroomEvents(transcriptSegments);
+    const savedEvents = await saveClassroomEvents({
+      lessonId: context.workflow.lessonId,
+      videoId: context.workflow.videoId,
+      events
+    });
+    return {
+      output: {
+        eventCount: savedEvents.length,
+        eventTypes: [...new Set(savedEvents.map((event) => event.type))]
+      }
+    };
   }
 };
 
@@ -62,7 +104,7 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
       capabilityMatrix: capabilityMatrixByLessonFormat[source.lesson.lessonFormat],
       transcriptSegments: source.transcriptSegments,
       metrics: source.metrics,
-      classroomEvents: [],
+      classroomEvents: await listClassroomEvents({ lessonId: source.lesson.id, videoId: context.workflow.videoId }),
       generationConfig: {
         language: "zh-CN",
         maxEvidenceCards: 6,

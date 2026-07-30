@@ -1,0 +1,10 @@
+alter table if exists lessons enable row level security;
+alter table if exists lesson_videos enable row level security;
+alter table if exists analysis_tasks enable row level security;
+alter table if exists workflow_runs enable row level security;
+alter table if exists workflow_step_runs enable row level security;
+alter table if exists transcript_segments enable row level security;
+alter table if exists lesson_sections enable row level security;
+alter table if exists classroom_events enable row level security;
+alter table if exists evidence_cards enable row level security;
+alter table if exists reports enable row level security;

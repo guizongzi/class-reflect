@@ -157,6 +157,18 @@ export type TranscriptSegment = {
   confidence?: number | null;
 };
 
+export type LessonSection = {
+  id?: string;
+  lessonId?: string;
+  videoId?: string;
+  startMs: number;
+  endMs: number;
+  title: string;
+  summaryText: string;
+  confidenceLabel: string;
+  tags: string[];
+};
+
 export type ClassroomMetric = {
   id: string;
   name: string;
@@ -171,6 +183,17 @@ export type ClassroomEvent = {
   startMs: number;
   endMs: number;
   transcriptSegmentIds?: string[];
+  quote?: string;
+  confidenceLabel?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type Report = {
+  id?: string;
+  lessonId: string;
+  markdownContent: string;
+  generatedFrom: Record<string, unknown>;
+  createdAt?: string;
 };
 
 export type TeachingEvidenceCard = {

@@ -391,7 +391,8 @@ a {
 
 .format-card,
 .assistant-card,
-.transcript-panel textarea {
+.transcript-panel textarea,
+.report-editor {
   background: #ffffff;
   border: 1px solid #dfe4dc;
   border-radius: 8px;
@@ -452,6 +453,29 @@ a {
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) auto;
   padding: 14px;
+}
+
+.transcript-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.transcript-actions textarea {
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  min-height: 120px;
+  min-width: 260px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.transcript-actions > div,
+.evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .transcript-body {
@@ -609,6 +633,61 @@ a {
   color: #b42318;
 }
 
+.evidence-list {
+  display: grid;
+  gap: 10px;
+}
+
+.evidence-card {
+  background: #ffffff;
+  border: 1px solid #dfe4dc;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.evidence-card div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.evidence-card strong {
+  color: #142033;
+}
+
+.evidence-card span,
+.evidence-card small {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.evidence-card p,
+.evidence-card em {
+  color: #344054;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.evidence-card em {
+  background: #f0f7f4;
+  border-left: 3px solid #1f8f55;
+  font-style: normal;
+  padding: 8px;
+}
+
+.report-editor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  min-height: 280px;
+  padding: 12px;
+  resize: vertical;
+  width: 100%;
+}
+
 .error-banner.compact {
   margin-top: 0;
 }
@@ -663,6 +742,11 @@ a {
 
   .transcript-item {
     grid-template-columns: 1fr;
+  }
+
+  .transcript-actions textarea {
+    min-width: 0;
+    width: 100%;
   }
 
   .upload-toolbar {
