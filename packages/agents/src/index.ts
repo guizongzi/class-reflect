@@ -111,24 +111,21 @@ export type TranscriptNormalizerOutput = {
 
 function createAgentLlmProvider() {
   try {
-    const baseUrl = process.env.LLM_BASE_URL || "";
-    const apiKey = process.env.LLM_API_KEY || "";
-    const model = process.env.LLM_MODEL || "";
-
-    if (!baseUrl || !apiKey || !model) {
+    const config = readAgentLlmConfig();
+    if (!config) {
       return null;
     }
 
     return {
       async generateJson<T>(input: { promptVersion: string; payload: unknown }): Promise<T> {
-        const response = await fetch(`${trimSlash(baseUrl)}/chat/completions`, {
+        const response = await fetch(`${trimSlash(config.baseUrl)}/chat/completions`, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${apiKey}`,
+            Authorization: `Bearer ${config.apiKey}`,
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            model,
+            model: config.model,
             temperature: 0.2,
             response_format: { type: "json_object" },
             messages: [
@@ -169,6 +166,37 @@ async function tryRunLlmAgent<T>(input: { promptVersion: string; payload: unknow
   }
 }
 
+function readAgentLlmConfig() {
+  try {
+    const raw = process.env.APP_CONFIG_ENV ? JSON.parse(process.env.APP_CONFIG_ENV) : {};
+    const baseUrl = process.env.LLM_BASE_URL || raw.LLM_BASE_URL || raw.llm?.baseUrl;
+    const apiKey = process.env.LLM_API_KEY || raw.LLM_API_KEY || raw.llm?.apiKey;
+    const model = process.env.LLM_MODEL || raw.LLM_MODEL || raw.llm?.model;
+
+    if (!baseUrl || !apiKey || !model) {
+      return null;
+    }
+
+    return { baseUrl: String(baseUrl), apiKey: String(apiKey), model: String(model) };
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonObject(content: string) {
+  try {
+    return JSON.parse(content);
+  } catch {
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("模型返回内容不是 JSON");
+    return JSON.parse(match[0]);
+  }
+}
+
+function trimSlash(value: string) {
+  return String(value || "").replace(/\/+$/, "");
+}
+
 function isTranscriptNormalizerOutput(value: unknown): value is TranscriptNormalizerOutput {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -186,20 +214,6 @@ function isTeachingEvidenceOutput(value: unknown): value is TeachingEvidenceOutp
     && Array.isArray(candidate.skippedCategories)
     && !!candidate.generationSummary
     && typeof candidate.generationSummary === "object";
-}
-
-function parseJsonObject(content: string) {
-  try {
-    return JSON.parse(content);
-  } catch {
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("模型返回内容不是 JSON");
-    return JSON.parse(match[0]);
-  }
-}
-
-function trimSlash(value: string) {
-  return String(value || "").replace(/\/+$/, "");
 }
 
 export async function runTranscriptNormalizer(segments: TranscriptSegment[]): Promise<AgentResult<TranscriptNormalizerOutput>> {
