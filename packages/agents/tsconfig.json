@@ -8,6 +8,7 @@
     "rootDir": "src",
     "declaration": true,
     "paths": {
+      "@class-reflect/observability": ["../observability/src/index.ts"],
       "@class-reflect/providers": ["../providers/src/index.ts"]
     }
   },

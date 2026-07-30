@@ -1,5 +1,8 @@
 import { loadAppConfig } from "@class-reflect/config";
+import { createLogger } from "@class-reflect/observability";
 import type { LlmProvider } from "../types";
+
+const logger = createLogger("providers.llm");
 
 export function createConfiguredLlmProvider(): LlmProvider {
   return {
@@ -8,6 +11,12 @@ export function createConfiguredLlmProvider(): LlmProvider {
       if (!config.llmBaseUrl || !config.llmApiKey || !config.llmModel) {
         throw new Error("LLM 配置缺失：需要 LLM_BASE_URL、LLM_API_KEY、LLM_MODEL");
       }
+      logger.info("ai call started", {
+        promptVersion: input.promptVersion,
+        provider: "openai-compatible",
+        endpoint: trimSlash(config.llmBaseUrl),
+        model: config.llmModel
+      });
       const response = await fetch(`${trimSlash(config.llmBaseUrl)}/chat/completions`, {
         method: "POST",
         headers: {
@@ -25,10 +34,36 @@ export function createConfiguredLlmProvider(): LlmProvider {
         })
       });
       const bodyText = await response.text();
-      if (!response.ok) throw new Error(`LLM 请求失败 ${response.status}：${bodyText.slice(0, 500)}`);
+      if (!response.ok) {
+        logger.error("ai call failed", {
+          promptVersion: input.promptVersion,
+          provider: "openai-compatible",
+          endpoint: trimSlash(config.llmBaseUrl),
+          model: config.llmModel,
+          status: response.status,
+          bodyPreview: bodyText.slice(0, 500)
+        });
+        throw new Error(`LLM 请求失败 ${response.status}：${bodyText.slice(0, 500)}`);
+      }
       const body = JSON.parse(bodyText);
       const content = body.choices?.[0]?.message?.content;
-      if (!content) throw new Error("LLM 没有返回内容");
+      if (!content) {
+        logger.error("ai call failed", {
+          promptVersion: input.promptVersion,
+          provider: "openai-compatible",
+          endpoint: trimSlash(config.llmBaseUrl),
+          model: config.llmModel,
+          reason: "missing_content"
+        });
+        throw new Error("LLM 没有返回内容");
+      }
+      logger.info("ai call completed", {
+        promptVersion: input.promptVersion,
+        provider: "openai-compatible",
+        endpoint: trimSlash(config.llmBaseUrl),
+        model: config.llmModel,
+        responseSize: content.length
+      });
       return parseJsonObject(content) as T;
     }
   };

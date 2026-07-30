@@ -109,6 +109,15 @@ export type TranscriptNormalizerOutput = {
   };
 };
 
+const logger = {
+  info(message: string, meta?: unknown) {
+    console.log(JSON.stringify({ level: "info", scope: "agents.llm", message, meta }));
+  },
+  error(message: string, meta?: unknown) {
+    console.error(JSON.stringify({ level: "error", scope: "agents.llm", message, meta }));
+  }
+};
+
 function createAgentLlmProvider() {
   try {
     const config = readAgentLlmConfig();
@@ -118,6 +127,12 @@ function createAgentLlmProvider() {
 
     return {
       async generateJson<T>(input: { promptVersion: string; payload: unknown }): Promise<T> {
+        logger.info("ai call started", {
+          promptVersion: input.promptVersion,
+          provider: "openai-compatible",
+          endpoint: trimSlash(config.baseUrl),
+          payloadSummary: summarizePayload(input.payload)
+        });
         const response = await fetch(`${trimSlash(config.baseUrl)}/chat/completions`, {
           method: "POST",
           headers: {
@@ -137,15 +152,34 @@ function createAgentLlmProvider() {
 
         const bodyText = await response.text();
         if (!response.ok) {
+          logger.error("ai call failed", {
+            promptVersion: input.promptVersion,
+            provider: "openai-compatible",
+            endpoint: trimSlash(config.baseUrl),
+            status: response.status,
+            bodyPreview: bodyText.slice(0, 500)
+          });
           throw new Error(`LLM 请求失败 ${response.status}：${bodyText.slice(0, 500)}`);
         }
 
         const body = JSON.parse(bodyText);
         const content = body.choices?.[0]?.message?.content;
         if (!content) {
+          logger.error("ai call failed", {
+            promptVersion: input.promptVersion,
+            provider: "openai-compatible",
+            endpoint: trimSlash(config.baseUrl),
+            reason: "missing_content"
+          });
           throw new Error("LLM 没有返回内容");
         }
 
+        logger.info("ai call completed", {
+          promptVersion: input.promptVersion,
+          provider: "openai-compatible",
+          endpoint: trimSlash(config.baseUrl),
+          responseSize: content.length
+        });
         return parseJsonObject(content) as T;
       }
     };
@@ -160,8 +194,20 @@ async function tryRunLlmAgent<T>(input: { promptVersion: string; payload: unknow
 
   try {
     const result = await llm.generateJson<T>({ promptVersion: input.promptVersion, payload: input.payload });
-    return input.validate(result) ? result : null;
+    if (!input.validate(result)) {
+      logger.error("ai call returned invalid payload", {
+        promptVersion: input.promptVersion,
+        payloadSummary: summarizePayload(input.payload)
+      });
+      return null;
+    }
+
+    return result;
   } catch {
+    logger.error("ai call threw", {
+      promptVersion: input.promptVersion,
+      payloadSummary: summarizePayload(input.payload)
+    });
     return null;
   }
 }
@@ -195,6 +241,19 @@ function parseJsonObject(content: string) {
 
 function trimSlash(value: string) {
   return String(value || "").replace(/\/+$/, "");
+}
+
+function summarizePayload(payload: unknown) {
+  if (!payload || typeof payload !== "object") return { type: typeof payload };
+
+  const candidate = payload as Record<string, unknown>;
+  return {
+    type: "object",
+    keys: Object.keys(candidate).slice(0, 10),
+    segmentCount: Array.isArray(candidate.segments) ? candidate.segments.length : undefined,
+    metricCount: Array.isArray(candidate.metrics) ? candidate.metrics.length : undefined,
+    classroomEventCount: Array.isArray(candidate.classroomEvents) ? candidate.classroomEvents.length : undefined
+  };
 }
 
 function isTranscriptNormalizerOutput(value: unknown): value is TranscriptNormalizerOutput {
