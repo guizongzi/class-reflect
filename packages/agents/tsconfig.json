@@ -1,11 +1,15 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "baseUrl": ".",
     "module": "CommonJS",
     "moduleResolution": "Node",
     "outDir": "dist",
     "rootDir": "src",
-    "declaration": true
+    "declaration": true,
+    "paths": {
+      "@class-reflect/providers": ["../providers/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts"]
 }

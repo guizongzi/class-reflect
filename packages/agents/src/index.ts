@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import {
   capabilityMatrixByLessonFormat,
   type CapabilityMatrix,
@@ -107,7 +109,117 @@ export type TranscriptNormalizerOutput = {
   };
 };
 
-export function runTranscriptNormalizer(segments: TranscriptSegment[]): AgentResult<TranscriptNormalizerOutput> {
+function createAgentLlmProvider() {
+  try {
+    const baseUrl = process.env.LLM_BASE_URL || "";
+    const apiKey = process.env.LLM_API_KEY || "";
+    const model = process.env.LLM_MODEL || "";
+
+    if (!baseUrl || !apiKey || !model) {
+      return null;
+    }
+
+    return {
+      async generateJson<T>(input: { promptVersion: string; payload: unknown }): Promise<T> {
+        const response = await fetch(`${trimSlash(baseUrl)}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.2,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: `promptVersion=${input.promptVersion}\n输出严格 JSON，不要 Markdown。` },
+              { role: "user", content: JSON.stringify(input.payload) }
+            ]
+          })
+        });
+
+        const bodyText = await response.text();
+        if (!response.ok) {
+          throw new Error(`LLM 请求失败 ${response.status}：${bodyText.slice(0, 500)}`);
+        }
+
+        const body = JSON.parse(bodyText);
+        const content = body.choices?.[0]?.message?.content;
+        if (!content) {
+          throw new Error("LLM 没有返回内容");
+        }
+
+        return parseJsonObject(content) as T;
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function tryRunLlmAgent<T>(input: { promptVersion: string; payload: unknown; validate: (value: unknown) => value is T }) {
+  const llm = createAgentLlmProvider();
+  if (!llm) return null;
+
+  try {
+    const result = await llm.generateJson<T>({ promptVersion: input.promptVersion, payload: input.payload });
+    return input.validate(result) ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+function isTranscriptNormalizerOutput(value: unknown): value is TranscriptNormalizerOutput {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return Array.isArray(candidate.normalizedSegments)
+    && Array.isArray(candidate.displaySections)
+    && !!candidate.analysisProjection
+    && typeof candidate.analysisProjection === "object";
+}
+
+function isTeachingEvidenceOutput(value: unknown): value is TeachingEvidenceOutput {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.lessonId === "string"
+    && Array.isArray(candidate.evidenceCards)
+    && Array.isArray(candidate.skippedCategories)
+    && !!candidate.generationSummary
+    && typeof candidate.generationSummary === "object";
+}
+
+function parseJsonObject(content: string) {
+  try {
+    return JSON.parse(content);
+  } catch {
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("模型返回内容不是 JSON");
+    return JSON.parse(match[0]);
+  }
+}
+
+function trimSlash(value: string) {
+  return String(value || "").replace(/\/+$/, "");
+}
+
+export async function runTranscriptNormalizer(segments: TranscriptSegment[]): Promise<AgentResult<TranscriptNormalizerOutput>> {
+  const llmOutput = await tryRunLlmAgent<TranscriptNormalizerOutput>({
+    promptVersion: "transcript-agent.llm.v1",
+    payload: {
+      instruction: "请把逐字稿整理成规范化的句子列表，并给出展示分段与分析投影。",
+      segments
+    },
+    validate: isTranscriptNormalizerOutput
+  });
+
+  if (llmOutput) {
+    return {
+      output: llmOutput,
+      promptVersion: "transcript-agent.llm.v1",
+      warnings: []
+    };
+  }
+
   const sortedSegments = [...segments].sort((a, b) => a.startMs - b.startMs);
   const speakerProfiles = buildSpeakerProfiles(sortedSegments);
   const normalizedSegments = sortedSegments.map((segment, index) => normalizeTranscriptSegment(segment, index, speakerProfiles));
@@ -130,7 +242,29 @@ export function runTranscriptNormalizer(segments: TranscriptSegment[]): AgentRes
   };
 }
 
-export function runTeachingEvidenceAgent(input: TeachingEvidenceInput): AgentResult<TeachingEvidenceOutput> {
+export async function runTeachingEvidenceAgent(input: TeachingEvidenceInput): Promise<AgentResult<TeachingEvidenceOutput>> {
+  const llmOutput = await tryRunLlmAgent<TeachingEvidenceOutput>({
+    promptVersion: "teaching-evidence.llm.v1",
+    payload: {
+      lessonId: input.lessonId,
+      lessonFormat: input.lesson_format,
+      capabilityMatrix: input.capabilityMatrix || capabilityMatrixByLessonFormat[input.lesson_format],
+      transcriptSegments: input.transcriptSegments,
+      metrics: input.metrics,
+      classroomEvents: input.classroomEvents || [],
+      generationConfig: input.generationConfig || { language: "zh-CN" }
+    },
+    validate: isTeachingEvidenceOutput
+  });
+
+  if (llmOutput) {
+    return {
+      output: llmOutput,
+      promptVersion: "teaching-evidence.llm.v1",
+      warnings: []
+    };
+  }
+
   const capabilityMatrix = input.capabilityMatrix || capabilityMatrixByLessonFormat[input.lesson_format];
   const enabledCategories = input.generationConfig?.enabledCategories || defaultEvidenceCategories;
   const maxEvidenceCards = input.generationConfig?.maxEvidenceCards || 6;
