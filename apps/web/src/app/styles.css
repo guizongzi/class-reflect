@@ -594,6 +594,12 @@ a {
   text-align: right;
 }
 
+.workflow-card-toolbar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .workflow-step-list {
   display: grid;
   gap: 8px;
@@ -609,7 +615,7 @@ a {
   border-radius: 8px;
   display: grid;
   gap: 4px 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   padding: 10px 12px;
 }
 
@@ -624,6 +630,12 @@ a {
 .workflow-step b {
   color: #667085;
   font-size: 12px;
+}
+
+.workflow-step-action {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 6px 10px;
 }
 
 .workflow-step small {

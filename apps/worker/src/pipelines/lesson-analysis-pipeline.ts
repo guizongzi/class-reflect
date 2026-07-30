@@ -44,6 +44,10 @@ const processors = new Map<string, WorkflowProcessor>([
 export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
   const orchestrator = new AgentOrchestrator();
   let status = await getWorkflowStatusForLesson(workflow.lessonId);
+  if (status.task?.status === "cancelled") {
+    logger.info("workflow cancelled before pipeline start", { workflowRunId: workflow.id });
+    return;
+  }
 
   const decision = orchestrator.decide({
     lessonId: workflow.lessonId,
@@ -67,12 +71,17 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
   }
 
   for (const step of workflowStepOptions) {
+    status = await getWorkflowStatusForLesson(workflow.lessonId);
+    if (status.task?.status === "cancelled") {
+      logger.info("workflow cancelled before step", { workflowRunId: workflow.id, stepKey: step.key });
+      return;
+    }
+
     if (step.key === "create_lesson") {
       await updateWorkflowStep({ workflowRunId: workflow.id, stepKey: step.key, status: "completed", progress: 100 });
       continue;
     }
 
-    status = await getWorkflowStatusForLesson(workflow.lessonId);
     const currentWorkflow = status.task || workflow;
     const stepState = status.steps.find((item) => item.stepKey === step.key);
     if (stepState?.status === "completed" || stepState?.status === "skipped") continue;
@@ -106,6 +115,12 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord) {
     try {
       const context: ProcessorContext = { workflow: currentWorkflow, steps: status.steps };
       const result = await processor.run(context);
+      const latestStatus = await getWorkflowStatusForLesson(workflow.lessonId);
+      if (latestStatus.task?.status === "cancelled") {
+        logger.info("workflow cancelled after step processor", { workflowRunId: workflow.id, stepKey: step.key });
+        return;
+      }
+
       await updateWorkflowStep({
         workflowRunId: workflow.id,
         stepKey: step.key,

@@ -246,7 +246,7 @@ export const workflowStepOptions = [
 
 export type WorkflowStepKey = (typeof workflowStepOptions)[number]["key"];
 
-export type WorkflowStepStatus = "waiting" | "queued" | "running" | "completed" | "failed" | "skipped";
+export type WorkflowStepStatus = "waiting" | "queued" | "running" | "completed" | "failed" | "skipped" | "cancelled";
 
 export type ReviewStatus =
   | "pending_review"

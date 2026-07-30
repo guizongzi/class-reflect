@@ -104,6 +104,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatusResponse | null>(null);
   const [isWorkflowRefreshing, setIsWorkflowRefreshing] = useState(false);
+  const [workflowAction, setWorkflowAction] = useState<string | null>(null);
   const [lessonTexts, setLessonTexts] = useState<LessonTextItem[]>([]);
   const [editingTextById, setEditingTextById] = useState<Record<string, string>>({});
   const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
@@ -245,6 +246,37 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
       setErrorMessage(error instanceof Error ? error.message : "报告生成失败");
     } finally {
       setSavingReport(false);
+    }
+  }
+
+  async function cancelWorkflow() {
+    if (!activeLessonId) return;
+    setWorkflowAction("cancel");
+    setErrorMessage(null);
+    try {
+      const status = await postJson<WorkflowStatusResponse>(`/api/lessons/${activeLessonId}/status/cancel`, {});
+      setWorkflowStatus(status);
+      setStatusMessage("已停止后台处理。可以从处理卡片中选择步骤重试。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "停止处理失败");
+    } finally {
+      setWorkflowAction(null);
+    }
+  }
+
+  async function retryWorkflow(fromStepKey?: string) {
+    if (!activeLessonId) return;
+    const actionKey = fromStepKey ? `retry-${fromStepKey}` : "retry";
+    setWorkflowAction(actionKey);
+    setErrorMessage(null);
+    try {
+      const status = await postJson<WorkflowStatusResponse>(`/api/lessons/${activeLessonId}/status/retry`, { fromStepKey });
+      setWorkflowStatus(status);
+      setStatusMessage(fromStepKey ? "已从选中步骤重新排队处理。" : "已重新排队后台处理。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "重试处理失败");
+    } finally {
+      setWorkflowAction(null);
     }
   }
 
@@ -509,7 +541,31 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
             <strong>处理卡片</strong>
             <span>{isWorkflowRefreshing ? "刷新中" : formatWorkflowSummary(workflowStatus)}</span>
           </div>
-          <WorkflowStepList steps={workflowStatus?.steps || []} />
+          {activeLessonId && workflowStatus?.task ? (
+            <div className="workflow-card-toolbar">
+              <button
+                className="ghost-button compact-button"
+                disabled={workflowAction === "retry"}
+                onClick={() => void retryWorkflow()}
+                type="button"
+              >
+                {workflowAction === "retry" ? "重试中" : "重试"}
+              </button>
+              <button
+                className="danger-button compact-button"
+                disabled={workflowAction === "cancel" || ["completed", "cancelled"].includes(workflowStatus.task.status)}
+                onClick={() => void cancelWorkflow()}
+                type="button"
+              >
+                {workflowAction === "cancel" ? "停止中" : "停止"}
+              </button>
+            </div>
+          ) : null}
+          <WorkflowStepList
+            steps={workflowStatus?.steps || []}
+            workflowAction={workflowAction}
+            onRetry={(stepKey) => void retryWorkflow(stepKey)}
+          />
         </section>
         <section className="assistant-card muted ai-chat-card">
           <div className="assistant-card-title">
@@ -850,19 +906,41 @@ function buildChatReply(message: string, context: {
   return "收到。我会结合当前课堂的上传状态、转写、证据和报告来协助你。现在这个对话框先提供本地上下文回复，后续可以接入真正的 AI 对话服务。";
 }
 
-function WorkflowStepList({ steps }: { steps: WorkflowStepItem[] }) {
+function WorkflowStepList({
+  steps,
+  workflowAction,
+  onRetry
+}: {
+  steps: WorkflowStepItem[];
+  workflowAction?: string | null;
+  onRetry?: (stepKey: string) => void;
+}) {
   if (!steps.length) {
     return <span>上传视频后，这里会显示可追踪的后台处理步骤。</span>;
   }
   return (
     <ol className="workflow-step-list">
-      {steps.map((step) => (
-        <li className={`workflow-step ${step.status}`} key={step.stepKey}>
-          <span>{step.label || step.stepKey}</span>
-          <b>{formatWorkflowStepStatus(step.status, step.progress)}</b>
-          {step.errorMessage ? <small>{step.errorMessage}</small> : null}
-        </li>
-      ))}
+      {steps.map((step) => {
+        const canRetryStep = Boolean(onRetry && !["completed", "skipped"].includes(step.status));
+        const actionKey = `retry-${step.stepKey}`;
+        return (
+          <li className={`workflow-step ${step.status}`} key={step.stepKey}>
+            <span>{step.label || step.stepKey}</span>
+            <b>{formatWorkflowStepStatus(step.status, step.progress)}</b>
+            {canRetryStep ? (
+              <button
+                className="ghost-button workflow-step-action"
+                disabled={workflowAction === actionKey}
+                onClick={() => onRetry?.(step.stepKey)}
+                type="button"
+              >
+                {workflowAction === actionKey ? "重试中" : "重试"}
+              </button>
+            ) : null}
+            {step.errorMessage ? <small>{step.errorMessage}</small> : null}
+          </li>
+        );
+      })}
     </ol>
   );
 }

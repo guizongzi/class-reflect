@@ -26,6 +26,73 @@ M2/M3 可选 Python ai-runtime
 → 确认后报告
 ```
 
+## 技术栈与版本
+
+版本以 `package.json`、`pnpm-lock.yaml` 和部署 Dockerfile 为准。当前只列出 M1 已实际使用的技术和服务。Node 和 pnpm 版本必须匹配，否则本地安装、Next.js 构建或 Cloud Run 镜像构建可能失败。
+
+### 工程与运行时
+
+| 技术 | 声明版本 | 当前锁定/部署版本 | 用途 |
+| --- | --- | --- | --- |
+| Node.js | 必须 `22.x` | Dockerfile 使用 `node:22-bookworm-slim` | API、Web、Worker 容器运行时；本地也必须使用 Node 22 |
+| pnpm | 必须 `11.9.0` | `packageManager: pnpm@11.9.0` | workspace 包管理；本地也必须使用 pnpm 11.9.0 |
+| Turborepo | `^2.3.3` | `2.10.7` | monorepo 构建与任务编排 |
+| TypeScript | `^5.7.3` | `5.9.3` | 全仓库主要开发语言 |
+| tsx | `^4.19.2` | `4.23.1` | Worker 本地开发 watch 启动 |
+| FFmpeg | Debian apt 安装 | 随 `node:22-bookworm-slim` 镜像仓库解析 | API/Worker 媒体处理依赖 |
+
+### 前端
+
+| 技术 | 声明版本 | 当前锁定版本 | 用途 |
+| --- | --- | --- | --- |
+| Next.js | `^15.1.4` | `15.5.22` | Web 前端框架 |
+| React | `^19.0.0` | `19.2.8` | 前端 UI |
+| React DOM | `^19.0.0` | `19.2.8` | 浏览器渲染 |
+| `@types/react` | `^19.0.2` | `19.2.17` | React 类型 |
+| `@types/react-dom` | `^19.0.2` | `19.2.3` | React DOM 类型 |
+
+### 后端 API 与 Worker
+
+| 技术 | 声明版本 | 当前锁定版本 | 用途 |
+| --- | --- | --- | --- |
+| NestJS Common/Core/Platform Fastify | `^10.4.15` | `10.4.22` | 主业务 API |
+| Fastify Platform | `^10.4.15` | `10.4.22` | NestJS HTTP 适配 |
+| RxJS | `^7.8.1` | `7.8.2` | NestJS 运行依赖 |
+| reflect-metadata | `^0.2.2` | `0.2.2` | NestJS 装饰器元数据 |
+| Zod | `^3.24.1` | `3.25.76` | API 请求契约和配置校验 |
+| pg | `^8.22.0` | `8.22.0` | PostgreSQL/Supabase 连接 |
+| `@types/pg` | `^8.20.0` | `8.20.0` | pg 类型 |
+
+### 对象存储与外部服务适配
+
+| 技术 | 声明版本 | 当前锁定/配置版本 | 用途 |
+| --- | --- | --- | --- |
+| AWS SDK S3 Client | `^3.744.0` | `3.1097.0` | Cloudflare R2 S3 兼容 API |
+| AWS SDK S3 Request Presigner | `^3.744.0` | `3.1097.0` | R2 预签名上传/读取 URL |
+| Cloudflare R2 | 托管服务 | 通过 `R2_*` 环境变量配置 | 原始视频、临时音频、报告导出对象 |
+| Supabase PostgreSQL | 托管服务 | 通过 `DATABASE_URL` 配置 | 课堂、逐字稿、证据、指标、报告数据 |
+| Google Cloud Run | 托管服务 | `asia-southeast1` | `class-reflect-api`、`class-reflect-web` |
+| Google Cloud Run Jobs | 托管服务 | `asia-southeast1` | `class-reflect-worker` 后台任务 |
+| Google Cloud Build | 托管服务 | 使用 `infra/google-cloud/cloudbuild.yaml` | API/Web 镜像构建与部署 |
+| Google Secret Manager | 托管服务 | `APP_CONFIG_ENV:latest` | 生产环境密钥注入 |
+| 阿里云 DashScope ASR | API 服务 | `ALIYUN_ASR_MODEL`，默认 `qwen3-asr-flash-filetrans` | 文件转写 |
+
+### Workspace 内部包
+
+| 包 | 版本 | 作用 |
+| --- | --- | --- |
+| `@class-reflect/shared-types` | `0.1.0` | 共享类型、课堂类型、workflow step、证据类型 |
+| `@class-reflect/api-contracts` | `0.1.0` | API 请求/响应契约 |
+| `@class-reflect/config` | `0.1.0` | 环境变量和 `APP_CONFIG_ENV` 解析 |
+| `@class-reflect/database` | `0.1.0` | PostgreSQL/Supabase 数据访问 |
+| `@class-reflect/domain` | `0.1.0` | 领域规则、课堂事件、报告模板 |
+| `@class-reflect/agents` | `0.1.0` | 教学证据生成 Agent 和 workflow 决策 |
+| `@class-reflect/metrics` | `0.1.0` | 不依赖 LLM 的确定性课堂指标 |
+| `@class-reflect/guardrails` | `0.1.0` | 证据校验和安全边界 |
+| `@class-reflect/providers` | `0.1.0` | R2、ASR、按需翻译等外部适配 |
+| `@class-reflect/prompts` | `0.1.0` | Agent/LLM prompt 文本 |
+| `@class-reflect/observability` | `0.1.0` | 日志封装 |
+
 ## 文档
 
 - [MVP 产品设计及技术方案](docs/MVP产品设计及技术方案.md)
@@ -67,6 +134,29 @@ legacy/
 ```
 
 ## 本地运行
+
+### 0. 确认本地版本
+
+本地必须使用：
+
+```text
+Node.js 22.x
+pnpm 11.9.0
+```
+
+检查版本：
+
+```bash
+node -v
+pnpm -v
+```
+
+推荐启用 Corepack，让项目按 `packageManager` 自动使用 pnpm 11.9.0：
+
+```bash
+corepack enable
+corepack prepare pnpm@11.9.0 --activate
+```
 
 ### 1. 安装依赖
 

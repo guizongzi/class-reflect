@@ -1049,6 +1049,81 @@ export async function getWorkflowStatusForLesson(lessonId: string): Promise<Work
   return { task, steps };
 }
 
+export async function cancelWorkflowRunForLesson(lessonId: string): Promise<WorkflowStatusRecord> {
+  const current = await getWorkflowStatusForLesson(lessonId);
+  if (!current.task) return current;
+  if (["completed", "cancelled"].includes(current.task.status)) return current;
+
+  await getPool().query(`
+    update workflow_runs
+    set
+      status = 'cancelled',
+      error_message = null,
+      locked_at = null,
+      locked_by = null,
+      finished_at = now(),
+      updated_at = now()
+    where id = $1
+  `, [current.task.id]);
+  await getPool().query(`
+    update workflow_step_runs
+    set
+      status = 'cancelled',
+      progress = case when progress > 0 then progress else 100 end,
+      error_message = null,
+      finished_at = now(),
+      updated_at = now()
+    where workflow_run_id = $1
+      and status in ('queued', 'running', 'waiting')
+  `, [current.task.id]);
+  return getWorkflowStatusForLesson(lessonId);
+}
+
+export async function retryWorkflowRunForLesson(input: {
+  lessonId: string;
+  fromStepKey?: WorkflowStepKey | null;
+}): Promise<WorkflowStatusRecord> {
+  const current = await getWorkflowStatusForLesson(input.lessonId);
+  if (!current.task) return current;
+
+  const fallbackStep = current.steps.find((step) => ["failed", "cancelled", "running", "queued", "waiting"].includes(step.status))?.stepKey;
+  const fromStepKey = input.fromStepKey || fallbackStep || current.task.currentStep || "upload_video";
+  const fromIndex = Math.max(workflowStepOptions.findIndex((step) => step.key === fromStepKey), 0);
+  const resetStepKeys = workflowStepOptions.slice(fromIndex).map((step) => step.key);
+
+  await getPool().query(`
+    update workflow_runs
+    set
+      status = 'queued',
+      current_step = $2,
+      progress = $3,
+      retry_count = retry_count + 1,
+      error_message = null,
+      locked_at = null,
+      locked_by = null,
+      finished_at = null,
+      updated_at = now()
+    where id = $1
+  `, [
+    current.task.id,
+    fromStepKey,
+    Math.round((fromIndex / Math.max(workflowStepOptions.length - 1, 1)) * 100)
+  ]);
+  await getPool().query(`
+    update workflow_step_runs
+    set
+      status = 'waiting',
+      progress = 0,
+      error_message = null,
+      started_at = null,
+      finished_at = null,
+      updated_at = now()
+    where workflow_run_id = $1
+      and step_key = any($2::text[])
+  `, [current.task.id, resetStepKeys]);
+  return getWorkflowStatusForLesson(input.lessonId);
+}
+
 export async function claimNextWorkflowRun(workerId: string): Promise<WorkflowRunRecord | null> {
   const result = await getPool().query(`
     with candidate as (
@@ -1131,7 +1206,7 @@ export async function updateWorkflowStep(input: {
       $4,
       $5,
       case when $3 = 'running' then now() else null end,
-      case when $3 in ('completed', 'failed', 'skipped') then now() else null end
+      case when $3 in ('completed', 'failed', 'skipped', 'cancelled') then now() else null end
     )
     on conflict (workflow_run_id, step_key)
     do update set
@@ -1139,7 +1214,7 @@ export async function updateWorkflowStep(input: {
       progress = excluded.progress,
       error_message = excluded.error_message,
       started_at = coalesce(workflow_step_runs.started_at, excluded.started_at),
-      finished_at = case when excluded.status in ('completed', 'failed', 'skipped') then now() else workflow_step_runs.finished_at end,
+      finished_at = case when excluded.status in ('completed', 'failed', 'skipped', 'cancelled') then now() else workflow_step_runs.finished_at end,
       updated_at = now()
     returning *
   `, [input.workflowRunId, input.stepKey, input.status, input.progress, input.errorMessage || null]);
