@@ -1377,6 +1377,36 @@ export async function claimNextWorkflowRun(workerId: string): Promise<WorkflowRu
   return run;
 }
 
+export async function getWorkflowRunById(workflowRunId: string): Promise<WorkflowRunRecord | null> {
+  const result = await getPool().query(`
+    select *
+    from workflow_runs
+    where id = $1
+    limit 1
+  `, [workflowRunId]);
+  return result.rows[0] ? mapWorkflowRunRow(result.rows[0]) : null;
+}
+
+export async function claimWorkflowRunById(workflowRunId: string, workerId: string): Promise<WorkflowRunRecord | null> {
+  const result = await getPool().query(`
+    update workflow_runs
+    set
+      status = 'running',
+      locked_at = now(),
+      locked_by = $2,
+      started_at = coalesce(started_at, now()),
+      retry_count = case when status = 'failed' then retry_count + 1 else retry_count end,
+      updated_at = now()
+    where id = $1
+      and status in ('queued', 'failed')
+    returning *
+  `, [workflowRunId, workerId]);
+  if (!result.rows[0]) return null;
+  const run = mapWorkflowRunRow(result.rows[0]);
+  await seedWorkflowSteps(run.id);
+  return run;
+}
+
 export async function updateWorkflowRunStatus(input: {
   workflowRunId: string;
   status: WorkflowStatus;

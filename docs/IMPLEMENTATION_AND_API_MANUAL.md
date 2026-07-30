@@ -34,7 +34,7 @@
 - 教学证据 Agent：生成带来源时间点、积极/中性/消极语气分类的证据卡。
 - 确定性指标：语速、连续讲授、停顿、问题、等待、反馈、填充词、模糊指代、课堂结构等。
 - 人工关口：校订原文确认、证据人工复核。
-- 部署：`infra/google-cloud/cloudbuild.yaml` 同时部署 API、Web、Worker Job。
+- 部署：`infra/google-cloud/cloudbuild.yaml` 同时部署 API、Web、Worker Service。
 
 当前仍待增强：
 
@@ -480,7 +480,7 @@ Cloud Build 配置文件：infra/google-cloud/cloudbuild.yaml
 | --- | --- |
 | API | `class-reflect-api` |
 | Web | `class-reflect-web` |
-| Worker Job | `class-reflect-worker` |
+| Worker Service | `class-reflect-worker` |
 
 生产 Secret 使用 Google Secret Manager：
 

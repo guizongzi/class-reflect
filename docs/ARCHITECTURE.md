@@ -10,11 +10,11 @@
 | --- | --- |
 | 前端 | `apps/web`，Next.js + React + TypeScript |
 | API | `apps/api`，NestJS + TypeScript |
-| Worker | `apps/worker`，TypeScript Worker，可本地常驻运行，也可由 Cloud Run Job 执行 |
+| Worker | `apps/worker`，TypeScript Worker，可本地常驻运行，也可由 Cloud Run Service 执行 |
 | 数据库 | Supabase PostgreSQL，通过 `packages/database` 访问 |
 | 对象存储 | Cloudflare R2，通过 `packages/providers` 生成签名 URL 和对象访问地址 |
 | ASR / LLM | 阿里云 DashScope 兼容接口，通过 `packages/providers` 适配 |
-| 部署 | Google Cloud Build + Cloud Run API/Web + Cloud Run Job Worker |
+| 部署 | Google Cloud Build + Cloud Run API/Web + Cloud Run Service Worker |
 
 `legacy/node-mvp` 只作为迁移参考，不承载正式功能。
 
@@ -69,7 +69,7 @@ web 选择或拖入课堂视频
 → web 直传视频到 R2 并显示上传进度
 → web 同时从视频生成 ASR 用音频并上传到 R2
 → api 确认视频和音频对象，创建或唤醒 workflow
-→ worker 本地常驻或 Cloud Run Job 认领 queued workflow
+→ worker 本地常驻或 Cloud Run Service 接收 Cloud Tasks 请求处理 queued workflow
 → worker 检查媒体对象
 → worker 调用 ASR 并保存带时间点逐字稿
 → 逐字稿处理 Agent 生成展示投影和分析投影
@@ -186,14 +186,14 @@ infra/google-cloud/cloudbuild.yaml
 | --- | --- | --- |
 | API | `class-reflect-api` | NestJS API |
 | Web | `class-reflect-web` | Next.js 前端 |
-| Worker | `class-reflect-worker` | Cloud Run Job，用 API 镜像执行 worker 命令 |
+| Worker | `class-reflect-worker` | Cloud Run Service，用 API 镜像执行 worker 命令 |
 
 API 和 Worker 使用同一组后端 Secret。Web 通过 `API_BASE_URL` 或构建期 `NEXT_PUBLIC_API_BASE_URL` 指向 API 服务。
 
 ## 10. 扩展原则
 
 - API 服务只处理短请求和状态查询。
-- 长任务进入 Worker 或 Cloud Run Job。
+- 长任务进入 Worker 或 Cloud Run Service。
 - 视频、音频、导出文件存对象存储，数据库只保存元数据、状态和可追溯结构化结果。
 - workflow 是流程状态源，前端永远从状态接口推导阶段。
 - 外部平台都走 `packages/providers`，替换供应商不改业务层。

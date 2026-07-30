@@ -16,6 +16,7 @@ import {
   updateLessonVideoObjectKey,
   saveTranslationResult
 } from "@class-reflect/database";
+import { WorkflowsService } from "../workflows/workflows.service";
 import {
   assertR2ObjectExists,
   createLessonAudioObjectKey,
@@ -45,6 +46,8 @@ const TranslateTargetSchema = z.object({
 
 @Injectable()
 export class LessonsService {
+  constructor(private readonly workflows: WorkflowsService) {}
+
   async listLessons(): Promise<{ lessons: Lesson[] }> {
     const lessons = await listLessonRecords();
     return { lessons: lessons as unknown as Lesson[] };
@@ -89,6 +92,10 @@ export class LessonsService {
     return { ok: true, deletedLessonId: lessonId };
   }
 
+  async createLessonWorkflow(lessonId: string) {
+    return this.workflows.ensureLessonWorkflowQueued(lessonId);
+  }
+
   async createVideoUpload(lessonId: string, body: unknown) {
     const lesson = await getLessonRecord(lessonId);
     if (!lesson) throw new NotFoundException("lesson not found");
@@ -123,6 +130,9 @@ export class LessonsService {
     if (!video) throw new NotFoundException("video not found");
     await assertR2ObjectExists(video.objectKey);
     const updated = await markLessonVideoUploaded(videoId);
+    if (updated) {
+      await this.workflows.ensureLessonWorkflowQueued(updated.lessonId);
+    }
     return { ok: true, video: updated };
   }
 
@@ -158,6 +168,9 @@ export class LessonsService {
     if (!video.audioObjectKey) throw new NotFoundException("audio upload not created");
     await assertR2ObjectExists(video.audioObjectKey);
     const updated = await markLessonVideoAudioUploaded(videoId);
+    if (updated) {
+      await this.workflows.ensureLessonWorkflowQueued(updated.lessonId);
+    }
     return { ok: true, video: updated };
   }
 

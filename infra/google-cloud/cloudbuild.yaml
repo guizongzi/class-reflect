@@ -3,7 +3,7 @@ substitutions:
   _REPOSITORY: class-reflect
   _API_SERVICE: class-reflect-api
   _WEB_SERVICE: class-reflect-web
-  _WORKER_JOB: class-reflect-worker
+  _WORKER_SERVICE: class-reflect-worker
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -56,7 +56,7 @@ steps:
       - --timeout
       - "3600"
       - --set-env-vars
-      - NODE_ENV=production,ASR_PROVIDER=aliyun
+      - NODE_ENV=production,ASR_PROVIDER=aliyun,CLOUD_TASKS_PROJECT_ID=$PROJECT_ID,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_TASKS_QUEUE=lesson-workflows,WORKER_BASE_URL=https://${_WORKER_SERVICE}-113773741484.${_REGION}.run.app,WORKFLOW_TASK_PATH=/api/workflows/process
       - --set-secrets
       - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
 
@@ -86,23 +86,25 @@ steps:
     entrypoint: gcloud
     args:
       - run
-      - jobs
       - deploy
-      - ${_WORKER_JOB}
+      - ${_WORKER_SERVICE}
       - --image
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_API_SERVICE}:$BUILD_ID
       - --region
       - ${_REGION}
+      - --platform
+      - managed
+      - --allow-unauthenticated
       - --memory
       - 2Gi
       - --cpu
       - "2"
-      - --task-timeout
+      - --timeout
       - "3600"
       - --command
       - pnpm
       - --args
-      - --filter,@class-reflect/worker,start,--,--once
+      - --filter,@class-reflect/worker,start
       - --set-env-vars
       - NODE_ENV=production,ASR_PROVIDER=aliyun
       - --set-secrets

@@ -10,6 +10,11 @@ const AppConfigSchema = z.object({
   r2AccessKeyId: z.string().optional(),
   r2SecretAccessKey: z.string().optional(),
   r2Region: z.string().default("auto"),
+  cloudTasksProjectId: z.string().optional(),
+  cloudTasksLocation: z.string().default("asia-southeast1"),
+  cloudTasksQueue: z.string().optional(),
+  workerBaseUrl: z.string().optional(),
+  workflowTaskPath: z.string().default("/api/workflows/process"),
   asrProvider: z.string().default("mock"),
   aliyunAsrModel: z.string().default("qwen3-asr-flash-filetrans"),
   aliyunAsrBaseUrl: z.string().default("https://dashscope.aliyuncs.com/api/v1"),
@@ -37,6 +42,11 @@ export function loadAppConfig(): AppConfig {
       r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || raw.R2_ACCESS_KEY_ID || raw.r2?.accessKeyId,
       r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY || raw.R2_SECRET_ACCESS_KEY || raw.r2?.secretAccessKey,
     r2Region: process.env.R2_REGION || raw.R2_REGION || raw.r2?.region || "auto",
+      cloudTasksProjectId: process.env.CLOUD_TASKS_PROJECT_ID || raw.CLOUD_TASKS_PROJECT_ID || raw.cloudTasksProjectId,
+      cloudTasksLocation: process.env.CLOUD_TASKS_LOCATION || raw.CLOUD_TASKS_LOCATION || raw.cloudTasksLocation || "asia-southeast1",
+      cloudTasksQueue: process.env.CLOUD_TASKS_QUEUE || raw.CLOUD_TASKS_QUEUE || raw.cloudTasksQueue,
+      workerBaseUrl: process.env.WORKER_BASE_URL || raw.WORKER_BASE_URL || raw.workerBaseUrl,
+      workflowTaskPath: process.env.WORKFLOW_TASK_PATH || raw.WORKFLOW_TASK_PATH || raw.workflowTaskPath || "/api/workflows/process",
     asrProvider: process.env.ASR_PROVIDER || raw.ASR_PROVIDER || raw.asrProvider || "mock",
     aliyunAsrModel:
       process.env.ALIYUN_ASR_MODEL ||
