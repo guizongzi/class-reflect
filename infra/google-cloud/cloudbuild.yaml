@@ -44,21 +44,7 @@ steps:
       - push
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_SERVICE}:$BUILD_ID
 
-  # 5. Ensure the async workflow queue exists
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        gcloud services enable cloudtasks.googleapis.com
-        if gcloud tasks queues describe ${_CLOUD_TASKS_QUEUE} --location=${_REGION} >/dev/null 2>&1; then
-          gcloud tasks queues update ${_CLOUD_TASKS_QUEUE} --location=${_REGION}
-        else
-          gcloud tasks queues create ${_CLOUD_TASKS_QUEUE} --location=${_REGION}
-        fi
-
-  # 6. Deploy API service
+  # 5. Deploy API service. Cloud Tasks API and queue are project prerequisites.
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
@@ -83,7 +69,7 @@ steps:
       - --set-secrets
       - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
 
-  # 7. Deploy Web service
+  # 6. Deploy Web service
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
@@ -106,7 +92,7 @@ steps:
       - --set-env-vars
       - NODE_ENV=production,NEXT_PUBLIC_API_BASE_URL=https://${_API_SERVICE}-113773741484.${_REGION}.run.app
 
-  # 8. Deploy Worker service
+  # 7. Deploy Worker service
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
