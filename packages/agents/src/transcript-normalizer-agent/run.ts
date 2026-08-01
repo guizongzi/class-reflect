@@ -1,8 +1,8 @@
 import type { TranscriptSegment } from "@class-reflect/shared-types";
 import { tryRunLlmAgent } from "../llm";
-import { transcriptNormalizerInstruction } from "../prompts";
+import { transcriptNormalizerInstruction } from "./prompt";
 import type { AgentResult, TranscriptNormalizerOutput } from "../types";
-import { isTranscriptNormalizerOutput } from "../validators";
+import { isTranscriptNormalizerOutput } from "./validator";
 import { buildDisplayTranscriptSections } from "./sections";
 import { buildSpeakerProfiles, normalizeTranscriptSegment } from "./speaker-profiles";
 import { inferTranscriptFlags, isTeacherLikeSegment } from "./text-utils";

@@ -70,3 +70,20 @@ export class AgentOrchestrator {
     return runWorkflowAgent(snapshot);
   }
 }
+
+export const workflowAgentModule = {
+  name: "workflow-agent" as const,
+  async run(input: unknown): Promise<AgentResult<WorkflowAgentDecision>> {
+    if (!isWorkflowAgentSnapshot(input)) throw new Error("workflow-agent input is invalid");
+    return runWorkflowAgent(input);
+  }
+};
+
+function isWorkflowAgentSnapshot(value: unknown): value is WorkflowAgentSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<WorkflowAgentSnapshot>;
+  return typeof candidate.lessonId === "string"
+    && typeof candidate.hasUploadedVideo === "boolean"
+    && typeof candidate.hasUploadedAudio === "boolean"
+    && Array.isArray(candidate.steps);
+}

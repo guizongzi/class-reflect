@@ -23,6 +23,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@class-reflect/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@class-reflect/api-contracts':
         specifier: workspace:*
         version: link:../../packages/api-contracts

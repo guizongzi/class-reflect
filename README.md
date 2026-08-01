@@ -221,6 +221,7 @@ FRONTEND_ORIGIN=http://localhost:3000
 | `AI_AGENT_DEBUG_LOG` | 开发/测试可观测日志 | 默认 `false`；设为 `true` 后输出 Agent/工具 JSON 日志 |
 | `AI_AGENT_LOG_BODY` | 逐字稿、Prompt、模型输出正文 | 默认 `false`；只在本地排查时设为 `true` |
 | `AI_AGENT_LOG_FILE` | 可选本地日志文件 | 设为 `true` 时额外写入 `logs/ai-agent-debug.log` |
+| `AI_AGENT_API_ENABLED` | Agent 独立调试 API | 生产默认 `false`；本地可设为 `true` |
 | `PORT` | 可选 | Cloud Run 注入 `8080`；本地 API 默认 `3001`，Web 默认 `3000` |
 
 `.env.example` 中若有 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DIRECT_URL`、`PUBLIC_BASE_URL`、`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`FFMPEG_PATH` 等占位项，当前正式 M1 代码不会读取它们。
@@ -262,6 +263,17 @@ AI_AGENT_LOG_FILE=true
 ```
 
 日志以 JSON Lines 输出到控制台，开启 `AI_AGENT_LOG_FILE` 后也写入 `logs/ai-agent-debug.log`。每次模型调用都会记录 `agent.request`、`agent.response` 或 `agent.error`，其中包含统一的 `traceId`、请求 ID、耗时、模型 token 用量、原始输出、JSON 解析结果和 Schema 校验结果。密钥、授权头、Cookie、令牌、密码、二进制视频/音频内容始终脱敏；正文关闭时逐字稿、Prompt 和模型输出只保留长度元数据。线上 Cloud Run 明确设置为关闭。
+
+### Agent 独立运行
+
+每个 Agent 既可被 Worker 编排，也可独立运行。构建后使用 JSON 输入文件执行：
+
+```bash
+pnpm --filter @class-reflect/agents build
+pnpm --filter @class-reflect/agents agent:run workflow-agent ./workflow-agent-input.json
+```
+
+本地 API 还提供 `GET /api/agents` 和 `POST /api/agents/run`。请求体包含 `agentName`、`input` 和可选 `traceId`；生产环境默认拒绝此调试接口。
 
 ### 3. 准备数据库
 

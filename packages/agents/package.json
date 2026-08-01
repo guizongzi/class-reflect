@@ -7,7 +7,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "check": "tsc --noEmit",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "agent:run": "node dist/standalone.js"
   },
   "dependencies": {
     "@class-reflect/observability": "workspace:*",

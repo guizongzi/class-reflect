@@ -11,6 +11,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@class-reflect/agents": "workspace:*",
     "@class-reflect/api-contracts": "workspace:*",
     "@class-reflect/config": "workspace:*",
     "@class-reflect/database": "workspace:*",

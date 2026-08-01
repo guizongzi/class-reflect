@@ -32,7 +32,7 @@ packages/
   domain/              课堂、报告等纯业务规则
   database/            Supabase/PostgreSQL repository
   providers/           R2、ASR、LLM、翻译等外部服务适配
-  agents/              逐字稿处理 Agent、教学证据生成 Agent
+  agents/              每个 Agent 独立目录，包含提示词、校验器、运行入口与专属规则
   metrics/             不依赖 LLM 的课堂指标计算
   guardrails/          证据来源和输出校验
   config/              环境变量和 Secret 配置读取
@@ -129,6 +129,18 @@ export_report
 - 从“生成报告”阶段重跑，只作废报告，保留已复核证据。
 
 ## 7. Agent 边界
+
+`packages/agents/src` 按 Agent 边界组织：
+
+```text
+ai/                           共享模型客户端、trace、调试日志、脱敏与工具包装器
+teaching-evidence-agent/      教学证据提示词、校验器、卡片规则与运行入口
+transcript-normalizer-agent/  逐字稿提示词、校验器、分段与角色整理逻辑
+workflow-agent/               工作流决策 Agent
+types/                        多 Agent 复用的输入输出契约
+```
+
+每个 Agent 通过共享注册表同时支持三种方式：本地 CLI Standalone、Worker Workflow 编排、受开发开关保护的 API 独立调用。三种方式复用同一 `run` 入口和输入校验，不复制业务逻辑。
 
 ### 逐字稿处理 Agent
 

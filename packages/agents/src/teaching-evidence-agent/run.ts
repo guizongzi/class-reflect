@@ -1,8 +1,8 @@
 import { capabilityMatrixByLessonFormat, type TeachingEvidenceCard } from "@class-reflect/shared-types";
 import { tryRunLlmAgent } from "../llm";
-import { teachingEvidenceOutputInstruction } from "../prompts";
+import { teachingEvidenceOutputInstruction } from "./prompt";
 import type { AgentResult, TeachingEvidenceInput, TeachingEvidenceOutput } from "../types";
-import { isTeachingEvidenceOutput } from "../validators";
+import { isTeachingEvidenceOutput } from "./validator";
 import {
   buildClassroomManagementCard,
   buildErrorAnalysisCard,

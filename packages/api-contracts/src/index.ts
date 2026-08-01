@@ -52,3 +52,17 @@ export const UpdateReportRequestSchema = z.object({
 });
 
 export type UpdateReportRequest = z.infer<typeof UpdateReportRequestSchema>;
+
+export const AgentNameSchema = z.enum([
+  "teaching-evidence-agent",
+  "transcript-normalizer-agent",
+  "workflow-agent"
+]);
+
+export const RunAgentRequestSchema = z.object({
+  agentName: AgentNameSchema,
+  input: z.unknown(),
+  traceId: z.string().min(1).optional()
+});
+
+export type RunAgentRequest = z.infer<typeof RunAgentRequestSchema>;
