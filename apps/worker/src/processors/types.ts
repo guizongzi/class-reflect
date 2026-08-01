@@ -3,6 +3,7 @@ import type { WorkflowRunRecord, WorkflowStepRunRecord } from "@class-reflect/da
 export type ProcessorContext = {
   workflow: WorkflowRunRecord;
   steps: WorkflowStepRunRecord[];
+  traceId?: string;
 };
 
 export type ProcessorResult = {

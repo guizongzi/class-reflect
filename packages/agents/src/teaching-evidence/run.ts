@@ -17,7 +17,9 @@ export async function runTeachingEvidenceAgent(
   input: TeachingEvidenceInput
 ): Promise<AgentResult<TeachingEvidenceOutput>> {
   const llmOutput = await tryRunLlmAgent<TeachingEvidenceOutput>({
+    agentName: "teaching-evidence-agent",
     promptVersion: "teaching-evidence.llm.v1",
+    traceId: input.traceId,
     payload: {
       instruction: teachingEvidenceOutputInstruction,
 

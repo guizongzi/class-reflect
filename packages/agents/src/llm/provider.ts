@@ -1,100 +1,43 @@
 /// <reference types="node" />
 
-import { readAgentLlmConfig, trimSlash } from "./config";
-import { parseJsonObject } from "./json";
+import { callAgent } from "../ai";
+import { readAgentLlmConfig } from "./config";
 import { logger } from "./logger";
 import { summarizePayload, summarizeResult } from "./summary";
 
-function createAgentLlmProvider() {
-  try {
-    const config = readAgentLlmConfig();
-    if (!config) {
-      return null;
-    }
-
-    return {
-      async generateJson<T>(input: { promptVersion: string; payload: unknown }): Promise<T> {
-        logger.info("ai call started", {
-          promptVersion: input.promptVersion,
-          provider: "openai-compatible",
-          endpoint: trimSlash(config.baseUrl),
-          payloadSummary: summarizePayload(input.payload)
-        });
-        const response = await fetch(`${trimSlash(config.baseUrl)}/chat/completions`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${config.apiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: config.model,
-            temperature: 0.2,
-            response_format: { type: "json_object" },
-            messages: [
-              { role: "system", content: `promptVersion=${input.promptVersion}\n输出严格 JSON，不要 Markdown。` },
-              { role: "user", content: JSON.stringify(input.payload) }
-            ]
-          })
-        });
-
-        const bodyText = await response.text();
-        if (!response.ok) {
-          logger.error("ai call failed", {
-            promptVersion: input.promptVersion,
-            provider: "openai-compatible",
-            endpoint: trimSlash(config.baseUrl),
-            status: response.status,
-            bodyPreview: bodyText.slice(0, 500)
-          });
-          throw new Error(`LLM 请求失败 ${response.status}：${bodyText.slice(0, 500)}`);
-        }
-
-        const body = JSON.parse(bodyText);
-        const content = body.choices?.[0]?.message?.content;
-        if (!content) {
-          logger.error("ai call failed", {
-            promptVersion: input.promptVersion,
-            provider: "openai-compatible",
-            endpoint: trimSlash(config.baseUrl),
-            reason: "missing_content"
-          });
-          throw new Error("LLM 没有返回内容");
-        }
-
-        logger.info("ai call completed", {
-          promptVersion: input.promptVersion,
-          provider: "openai-compatible",
-          endpoint: trimSlash(config.baseUrl),
-          responseSize: content.length
-        });
-        return parseJsonObject(content) as T;
-      }
-    };
-  } catch {
-    return null;
-  }
-}
-
-export async function tryRunLlmAgent<T>(input: { promptVersion: string; payload: unknown; validate: (value: unknown) => value is T }) {
-  const llm = createAgentLlmProvider();
-  if (!llm) return null;
+export async function tryRunLlmAgent<T>(input: {
+  agentName: string;
+  promptVersion: string;
+  payload: unknown;
+  traceId?: string;
+  validate: (value: unknown) => value is T;
+}) {
+  if (!readAgentLlmConfig()) return null;
 
   try {
-    const result = await llm.generateJson<T>({ promptVersion: input.promptVersion, payload: input.payload });
-    if (!input.validate(result)) {
+    const result = await callAgent<T>({
+      agentName: input.agentName,
+      promptVersion: input.promptVersion,
+      input: input.payload,
+      traceId: input.traceId,
+      validate: input.validate
+    });
+    if (!result.validationResult.valid) {
       logger.error("ai call returned invalid payload", {
         promptVersion: input.promptVersion,
         payloadSummary: summarizePayload(input.payload),
-        resultSummary: summarizeResult(result)
+        resultSummary: summarizeResult(result.parsedOutput)
       });
-    return null;
-  }
+      return null;
+    }
 
-    return result;
-  } catch {
+    return result.output;
+  } catch (error) {
     logger.error("ai call threw", {
       promptVersion: input.promptVersion,
-      payloadSummary: summarizePayload(input.payload)
+      agentName: input.agentName,
+      payloadSummary: summarizePayload(input.payload),
+      error: error instanceof Error ? error.message : String(error)
     });
     return null;
   }

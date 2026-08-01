@@ -218,6 +218,9 @@ FRONTEND_ORIGIN=http://localhost:3000
 | `LLM_BASE_URL` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | OpenAI-compatible `/chat/completions` base URL |
 | `LLM_API_KEY` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | LLM API key |
 | `LLM_MODEL` | 仅 `TRANSLATION_PROVIDER=llm` 时需要 | 例如 `qwen-plus` |
+| `AI_AGENT_DEBUG_LOG` | 开发/测试可观测日志 | 默认 `false`；设为 `true` 后输出 Agent/工具 JSON 日志 |
+| `AI_AGENT_LOG_BODY` | 逐字稿、Prompt、模型输出正文 | 默认 `false`；只在本地排查时设为 `true` |
+| `AI_AGENT_LOG_FILE` | 可选本地日志文件 | 设为 `true` 时额外写入 `logs/ai-agent-debug.log` |
 | `PORT` | 可选 | Cloud Run 注入 `8080`；本地 API 默认 `3001`，Web 默认 `3000` |
 
 `.env.example` 中若有 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DIRECT_URL`、`PUBLIC_BASE_URL`、`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`FFMPEG_PATH` 等占位项，当前正式 M1 代码不会读取它们。
@@ -247,6 +250,18 @@ FRONTEND_ORIGIN=http://localhost:3000
 Web 默认使用同源 `/api/*` 转发到后端。Cloud Run 上建议给 `class-reflect-web` 设置 `API_BASE_URL=https://class-reflect-api-113773741484.asia-southeast1.run.app`，本地则设置 `API_BASE_URL=http://localhost:3001`。`NEXT_PUBLIC_API_BASE_URL` 是可选的前端构建期变量，只有希望浏览器直接请求 API 时才填写。
 
 真实 secret key 只放在本地 `.env` 或云端 Secret Manager，不能提交到仓库。
+
+### AI Agent 开发日志
+
+默认不记录 Agent 请求正文。仅在本地开发或受控测试环境中启用：
+
+```text
+AI_AGENT_DEBUG_LOG=true
+AI_AGENT_LOG_BODY=true
+AI_AGENT_LOG_FILE=true
+```
+
+日志以 JSON Lines 输出到控制台，开启 `AI_AGENT_LOG_FILE` 后也写入 `logs/ai-agent-debug.log`。每次模型调用都会记录 `agent.request`、`agent.response` 或 `agent.error`，其中包含统一的 `traceId`、请求 ID、耗时、模型 token 用量、原始输出、JSON 解析结果和 Schema 校验结果。密钥、授权头、Cookie、令牌、密码、二进制视频/音频内容始终脱敏；正文关闭时逐字稿、Prompt 和模型输出只保留长度元数据。线上 Cloud Run 明确设置为关闭。
 
 ### 3. 准备数据库
 

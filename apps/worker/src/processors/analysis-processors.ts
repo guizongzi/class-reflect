@@ -25,7 +25,7 @@ export const normalizeTranscriptProcessor: WorkflowProcessor = {
     });
     if (!transcriptSegments.length) throw new Error("还没有可用于整理的逐字稿");
 
-    const result = await runTranscriptNormalizer(transcriptSegments);
+    const result = await runTranscriptNormalizer(transcriptSegments, { traceId: context.traceId });
     const normalizedSegments = await updateTranscriptSegmentsProjection({
       lessonId: context.workflow.lessonId,
       videoId: context.workflow.videoId,
@@ -51,7 +51,7 @@ export const buildSectionsProcessor: WorkflowProcessor = {
     });
     if (!transcriptSegments.length) throw new Error("还没有可用于生成展示逐字稿的句子");
 
-    const result = await runTranscriptNormalizer(transcriptSegments);
+    const result = await runTranscriptNormalizer(transcriptSegments, { traceId: context.traceId });
     const savedSections = await saveLessonSections({
       lessonId: context.workflow.lessonId,
       videoId: context.workflow.videoId,
@@ -151,6 +151,7 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
 
     const result = await runTeachingEvidenceAgent({
       lessonId: source.lesson.id,
+      traceId: context.traceId,
       lesson_format: source.lesson.lessonFormat,
       capabilityMatrix: capabilityMatrixByLessonFormat[source.lesson.lessonFormat],
       transcriptSegments: source.transcriptSegments,

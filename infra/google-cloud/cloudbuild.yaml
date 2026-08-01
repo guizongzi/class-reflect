@@ -65,7 +65,7 @@ steps:
       - --timeout
       - "3600"
       - --set-env-vars
-      - NODE_ENV=production,ASR_PROVIDER=aliyun,CLOUD_TASKS_PROJECT_ID=$PROJECT_ID,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_TASKS_QUEUE=${_CLOUD_TASKS_QUEUE},WORKER_BASE_URL=https://${_WORKER_SERVICE}-113773741484.${_REGION}.run.app,WORKFLOW_TASK_PATH=/api/workflows/process
+      - NODE_ENV=production,ASR_PROVIDER=aliyun,AI_AGENT_DEBUG_LOG=false,AI_AGENT_LOG_BODY=false,CLOUD_TASKS_PROJECT_ID=$PROJECT_ID,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_TASKS_QUEUE=${_CLOUD_TASKS_QUEUE},WORKER_BASE_URL=https://${_WORKER_SERVICE}-113773741484.${_REGION}.run.app,WORKFLOW_TASK_PATH=/api/workflows/process
       - --set-secrets
       - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
 
@@ -115,7 +115,7 @@ steps:
       - --command=pnpm
       - --args=--filter,@class-reflect/worker,start
       - --set-env-vars
-      - NODE_ENV=production,ASR_PROVIDER=aliyun,WORKER_CONCURRENCY=4,WORKER_POLL_INTERVAL_MS=2000
+      - NODE_ENV=production,ASR_PROVIDER=aliyun,AI_AGENT_DEBUG_LOG=false,AI_AGENT_LOG_BODY=false,WORKER_CONCURRENCY=4,WORKER_POLL_INTERVAL_MS=2000
       - --set-secrets
       - APP_CONFIG_ENV=APP_CONFIG_ENV:latest
 

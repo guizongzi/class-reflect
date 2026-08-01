@@ -114,7 +114,7 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord, cor
     });
 
     try {
-      const context: ProcessorContext = { workflow: currentWorkflow, steps: status.steps };
+      const context: ProcessorContext = { workflow: currentWorkflow, steps: status.steps, traceId };
       const result = await processor.run(context);
       const latestStatus = await getWorkflowStatusForLesson(workflow.lessonId);
       if (latestStatus.task?.status === "cancelled") {

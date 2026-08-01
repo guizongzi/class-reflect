@@ -8,10 +8,13 @@ import { buildSpeakerProfiles, normalizeTranscriptSegment } from "./speaker-prof
 import { inferTranscriptFlags, isTeacherLikeSegment } from "./text-utils";
 
 export async function runTranscriptNormalizer(
-  segments: TranscriptSegment[]
+  segments: TranscriptSegment[],
+  options?: { traceId?: string }
 ): Promise<AgentResult<TranscriptNormalizerOutput>> {
   const llmOutput = await tryRunLlmAgent<TranscriptNormalizerOutput>({
+    agentName: "transcript-normalizer-agent",
     promptVersion: "transcript-agent.llm.v1",
+    traceId: options?.traceId,
     payload: {
       instruction: transcriptNormalizerInstruction,
       segments

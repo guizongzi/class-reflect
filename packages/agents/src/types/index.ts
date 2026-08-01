@@ -18,6 +18,7 @@ export type AgentResult<T> = {
 
 export type TeachingEvidenceInput = {
   lessonId: string;
+  traceId?: string;
   lesson_format: LessonFormat;
   capabilityMatrix?: CapabilityMatrix;
   transcriptSegments: TranscriptSegment[];
