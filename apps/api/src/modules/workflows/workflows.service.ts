@@ -144,7 +144,7 @@ async function createCloudTask(input: {
   if (response.ok) return;
   const text = await response.text();
   if (response.status === 409 || text.includes("ALREADY_EXISTS")) {
-    throw new Error(`cloud task already exists: ${input.taskId}`);
+    return;
   }
   throw new Error(`cloud task creation failed with ${response.status}: ${text}`);
 }

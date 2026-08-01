@@ -436,6 +436,11 @@ a {
   gap: 10px;
 }
 
+.assistant-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .format-grid.compact {
   grid-template-columns: 1fr;
 }

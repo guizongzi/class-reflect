@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
-import { CreateLessonRequestSchema } from "@class-reflect/api-contracts";
+import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { CreateLessonRequestSchema, UpdateLessonRequestSchema } from "@class-reflect/api-contracts";
 import { LessonsService } from "./lessons.service";
 
 @Controller("api/lessons")
@@ -19,6 +19,11 @@ export class LessonsController {
   @Get(":lessonId")
   async getLesson(@Param("lessonId") lessonId: string) {
     return this.lessons.getLesson(lessonId);
+  }
+
+  @Patch(":lessonId")
+  async updateLesson(@Param("lessonId") lessonId: string, @Body() body: unknown) {
+    return this.lessons.updateLesson(lessonId, UpdateLessonRequestSchema.parse(body));
   }
 
   @Delete(":lessonId")

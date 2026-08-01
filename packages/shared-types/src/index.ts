@@ -135,7 +135,7 @@ export const capabilityMatrixByLessonFormat = {
     canObserveStudentSpeech: false,
     canDistinguishIndividualResponse: false,
     canDistinguishChoralResponse: false,
-    canDetectTeacherSelfAnswer: true,
+    canDetectTeacherSelfAnswer: false,
     canMeasureWaitTime: false,
     canAnalyzeClassroomManagementLanguage: false,
     canAnalyzeLearningCheckLevel: true,

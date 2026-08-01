@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import type { CreateLessonRequest } from "@class-reflect/api-contracts";
+import type { CreateLessonRequest, UpdateLessonRequest } from "@class-reflect/api-contracts";
 import { z } from "zod";
 import { createLessonDraft, type Lesson } from "@class-reflect/domain";
 import {
@@ -14,6 +14,7 @@ import {
   markLessonVideoUploaded,
   setLessonVideoAudioObject,
   updateLessonVideoObjectKey,
+  updateLessonRecord,
   saveTranslationResult
 } from "@class-reflect/database";
 import { WorkflowsService } from "../workflows/workflows.service";
@@ -84,6 +85,15 @@ export class LessonsService {
       }
     }));
     return { ...lesson, videos };
+  }
+
+  async updateLesson(lessonId: string, request: UpdateLessonRequest) {
+    const lesson = await updateLessonRecord({
+      lessonId,
+      lessonFormat: request.lessonFormat || request.lesson_format
+    });
+    if (!lesson) throw new NotFoundException("lesson not found");
+    return { lesson };
   }
 
   async deleteLesson(lessonId: string) {

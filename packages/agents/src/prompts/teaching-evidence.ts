@@ -109,4 +109,10 @@ export const teachingEvidenceOutputInstruction = `
 13. analysis 和 teacherView 缺少可靠依据时可以省略。
 14. sentiment 无法确定时返回 "neutral"。
 15. confidence 不能仅根据主观判断，必须结合逐字稿、指标或课堂事件。
+
+录播网课硬性限制：
+- 当 lessonFormat 或 lesson_format 为 "recorded_online_class" 时，不得生成关于等待学生回答、学生回应不足、学生回答机会、点名、举手、师生互动不足、教师自问自答、提问后过快进入说明的证据。
+- 录播网课中的提问句只能按“自学提示、结构引导、解释节奏、信息密度”分析，不能按真实课堂互动或等待时间分析。
+- 不要把上述限制换到 question_quality、learning_check_level、weakness_detection 等其他 category 中表达。
+- 如果只有教师连续讲解和教师自己接续回答，只能说明讲解衔接或自学提示设计，不得建议“请一位同学回答”“给学生回答机会”等真实课堂动作。
 `;

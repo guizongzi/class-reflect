@@ -113,7 +113,7 @@ export function inferLearningCheckType(text: string): LearningCheckType {
 }
 
 export function isCategorySupported(category: EvidenceCategory, lessonFormat: LessonFormat, capabilityMatrix: CapabilityMatrix) {
-  if (lessonFormat === "recorded_online_class" && ["wait_time", "student_response", "classroom_management"].includes(category)) return false;
+  if (lessonFormat === "recorded_online_class" && ["wait_time", "student_response", "response_pattern", "classroom_management"].includes(category)) return false;
   if (category === "classroom_management") return capabilityMatrix.canAnalyzeClassroomManagementLanguage;
   if (category === "learning_check_level") return capabilityMatrix.canAnalyzeLearningCheckLevel;
   if (category === "response_pattern") return capabilityMatrix.canDetectTeacherSelfAnswer;

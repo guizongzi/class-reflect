@@ -259,7 +259,7 @@ export async function createLessonRecord(input: {
   addColumn(entries, columns, "teacher_id", "demo-teacher");
   addColumn(entries, columns, "course_title", input.courseTitle || "课堂复盘");
   addColumn(entries, columns, "lesson_title", input.lessonTitle);
-  addColumn(entries, columns, "lesson_format", input.lessonFormat || "offline_classroom_recording");
+  addColumn(entries, columns, "lesson_format", normalizeLessonFormat(input.lessonFormat));
   addColumn(entries, columns, "grade", input.grade || null);
   addColumn(entries, columns, "subject", input.subject || null);
   addColumn(entries, columns, "analysis_goal", input.analysisGoal || null);
@@ -283,6 +283,41 @@ export async function createLessonRecord(input: {
       updated_at
   `, values);
   const row = result.rows[0];
+  return {
+    id: row.id,
+    courseTitle: row.course_title,
+    lessonTitle: row.lesson_title,
+    lessonFormat: row.lesson_format,
+    grade: row.grade,
+    subject: row.subject,
+    status: row.status,
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at)
+  };
+}
+
+export async function updateLessonRecord(input: {
+  lessonId: string;
+  lessonFormat?: string;
+}): Promise<LessonDetailRecord["lesson"] | null> {
+  const result = await getPool().query(`
+    update lessons
+    set lesson_format = $2,
+        updated_at = now()
+    where id = $1
+    returning
+      id,
+      course_title,
+      lesson_title,
+      to_jsonb(lessons)->>'lesson_format' as lesson_format,
+      grade,
+      subject,
+      status,
+      created_at,
+      updated_at
+  `, [input.lessonId, normalizeLessonFormat(input.lessonFormat)]);
+  const row = result.rows[0];
+  if (!row) return null;
   return {
     id: row.id,
     courseTitle: row.course_title,
@@ -1726,6 +1761,12 @@ function parseJsonRecord(value: unknown): Record<string, unknown> {
 }
 
 function normalizeLessonFormat(value: unknown): LessonFormat {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (normalized === "线下课堂录像" || normalized === "线下课堂" || normalized === "线下") return "offline_classroom_recording";
+    if (normalized === "直播网课" || normalized === "直播") return "live_online_class";
+    if (normalized === "录播网课" || normalized === "录播" || normalized === "录制课") return "recorded_online_class";
+  }
   if (value === "live_online_class" || value === "recorded_online_class" || value === "offline_classroom_recording") return value;
   return "offline_classroom_recording";
 }

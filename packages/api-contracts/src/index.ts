@@ -21,6 +21,15 @@ export const CreateLessonRequestSchema = z.object({
 
 export type CreateLessonRequest = z.infer<typeof CreateLessonRequestSchema>;
 
+export const UpdateLessonRequestSchema = z.object({
+  lessonFormat: LessonFormatSchema.optional(),
+  lesson_format: LessonFormatSchema.optional()
+}).refine((value) => value.lessonFormat || value.lesson_format, {
+  message: "lessonFormat is required"
+});
+
+export type UpdateLessonRequest = z.infer<typeof UpdateLessonRequestSchema>;
+
 export const ReviewEvidenceRequestSchema = z.object({
   status: z.enum(["accepted", "edited_and_accepted", "rejected", "needs_more_context"]),
   finalFact: z.string().optional(),

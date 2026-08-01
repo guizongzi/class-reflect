@@ -22,6 +22,7 @@ export async function runTeachingEvidenceAgent(
       instruction: teachingEvidenceOutputInstruction,
 
       lessonId: input.lessonId,
+      lesson_format: input.lesson_format,
       lessonFormat: input.lesson_format,
 
       capabilityMatrix:

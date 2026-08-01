@@ -128,6 +128,8 @@ const workflowStageStepGroups: Record<number, string[]> = {
 export function LessonWorkspaceShell({ lessonId }: Props) {
   const [activeLessonId, setActiveLessonId] = useState(lessonId || "");
   const [lessonFormat, setLessonFormat] = useState<LessonFormat | "">("");
+  const [savedLessonFormat, setSavedLessonFormat] = useState<LessonFormat | "">("");
+  const [savingLessonFormat, setSavingLessonFormat] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
@@ -187,6 +189,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
         if (!cancelled) {
           if (detail.lesson?.lessonFormat && isLessonFormat(detail.lesson.lessonFormat)) {
             setLessonFormat(detail.lesson.lessonFormat);
+            setSavedLessonFormat(detail.lesson.lessonFormat);
           }
           const playableVideo = detail.videos?.find((video) => video.playbackUrl) || null;
           const uploadedVideo = detail.videos?.find((video) => video.uploadStatus === "uploaded") || null;
@@ -437,6 +440,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   function resetForNewUpload() {
     setActiveLessonId("");
     setLessonFormat("");
+    setSavedLessonFormat("");
     setWorkflowStatus(null);
     setWorkflowAction(null);
     setLessonTexts([]);
@@ -470,6 +474,12 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
     try {
       const isCreatingNewLesson = !activeLessonId;
       const ensuredLessonId = activeLessonId || await createLessonFromFile(file, selectedLessonFormat);
+      if (activeLessonId) {
+        await patchJson(`/api/lessons/${ensuredLessonId}`, { lessonFormat: selectedLessonFormat });
+        setSavedLessonFormat(selectedLessonFormat);
+      } else {
+        setSavedLessonFormat(selectedLessonFormat);
+      }
       setActiveLessonId(ensuredLessonId);
       if (isCreatingNewLesson) window.history.replaceState(null, "", `/lessons/${ensuredLessonId}`);
 
@@ -516,6 +526,31 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
     }
   }
 
+  async function saveLessonFormat() {
+    if (!activeLessonId || !lessonFormat) {
+      setErrorMessage("请先选择课堂类型。");
+      return;
+    }
+    setSavingLessonFormat(true);
+    setErrorMessage(null);
+    try {
+      const result = await patchJson<{ lesson?: { lessonFormat?: LessonFormat | null } }>(`/api/lessons/${activeLessonId}`, {
+        lessonFormat
+      });
+      const nextFormat = result.lesson?.lessonFormat && isLessonFormat(result.lesson.lessonFormat)
+        ? result.lesson.lessonFormat
+        : lessonFormat;
+      setLessonFormat(nextFormat);
+      setSavedLessonFormat(nextFormat);
+      setStatusMessage("课堂类型已更新。后续重跑证据会按新的课堂类型分析。");
+      setDetailRefreshNonce((value) => value + 1);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "课堂类型保存失败");
+    } finally {
+      setSavingLessonFormat(false);
+    }
+  }
+
   function sendChatMessage() {
     const message = chatInput.trim();
     if (!message) return;
@@ -548,7 +583,8 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
     ? workflowStatus.steps
     : buildUploadWorkflowSteps(step, videoProgress, audioProgress);
   const visibleWorkflowSteps = filterWorkflowStepsByStage(displayWorkflowSteps, visibleProgressStageIndex);
-  const shouldShowLessonFormatCard = Boolean(pendingFile && !activeLessonId);
+  const shouldShowLessonFormatCard = Boolean((pendingFile && !activeLessonId) || visibleProgressStageIndex === 0);
+  const isLessonFormatDirty = Boolean(activeLessonId && lessonFormat && lessonFormat !== savedLessonFormat);
   const pendingEvidenceCards = evidenceCards.filter(isPendingEvidenceCard);
   const isWaitingForTranscriptConfirmation = Boolean(
     workflowStatus?.task?.status === "waiting_for_human" && workflowStatus.task.currentStep === "build_sections"
@@ -754,7 +790,6 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
               {lessonFormatOptions.map((option) => (
                 <button
                   className={`format-card ${lessonFormat === option.value ? "selected" : ""}`}
-                  disabled={Boolean(activeLessonId && !pendingFile)}
                   key={option.value}
                   onClick={() => setLessonFormat(option.value)}
                   type="button"
@@ -764,6 +799,18 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
                 </button>
               ))}
             </div>
+            {activeLessonId ? (
+              <div className="assistant-inline-actions">
+                <button
+                  className="primary-button compact-button"
+                  disabled={!lessonFormat || savingLessonFormat || !isLessonFormatDirty}
+                  onClick={() => void saveLessonFormat()}
+                  type="button"
+                >
+                  {savingLessonFormat ? "保存中" : isLessonFormatDirty ? "保存课堂类型" : "类型已保存"}
+                </button>
+              </div>
+            ) : null}
           </div>
           <button className="ghost-button" onClick={() => fileInputRef.current?.click()} type="button">
             {selectedFileName ? "重新选择视频" : "选择课堂视频"}

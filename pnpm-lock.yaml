@@ -35,6 +35,9 @@ importers:
       '@class-reflect/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@class-reflect/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@class-reflect/providers':
         specifier: workspace:*
         version: link:../../packages/providers
@@ -143,6 +146,12 @@ importers:
 
   packages/agents:
     dependencies:
+      '@class-reflect/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@class-reflect/providers':
+        specifier: workspace:*
+        version: link:../providers
       '@class-reflect/shared-types':
         specifier: workspace:*
         version: link:../shared-types
@@ -251,6 +260,9 @@ importers:
       '@class-reflect/config':
         specifier: workspace:*
         version: link:../config
+      '@class-reflect/observability':
+        specifier: workspace:*
+        version: link:../observability
     devDependencies:
       typescript:
         specifier: ^5.7.3
