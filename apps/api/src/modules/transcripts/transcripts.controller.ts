@@ -1,5 +1,5 @@
 import { Body, Controller, Param, Patch } from "@nestjs/common";
-import { UpdateLessonSectionRequestSchema } from "@class-reflect/api-contracts";
+import { UpdateLessonSectionRequestSchema, UpdateTranscriptSegmentRequestSchema } from "@class-reflect/api-contracts";
 import { TranscriptsService } from "./transcripts.service";
 
 @Controller("api/lessons/:lessonId/transcripts")
@@ -21,6 +21,6 @@ export class TranscriptsController {
     @Param("segmentId") segmentId: string,
     @Body() body: unknown
   ) {
-    return this.transcripts.updateSegment(lessonId, segmentId, UpdateLessonSectionRequestSchema.parse(body));
+    return this.transcripts.updateSegment(lessonId, segmentId, UpdateTranscriptSegmentRequestSchema.parse(body));
   }
 }

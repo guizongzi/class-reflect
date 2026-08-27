@@ -10,6 +10,7 @@ export async function tryRunLlmAgent<T>(input: {
   promptVersion: string;
   payload: unknown;
   traceId?: string;
+  systemInstruction?: string;
   validate: (value: unknown) => value is T;
 }) {
   if (!readAgentLlmConfig()) return null;
@@ -20,6 +21,7 @@ export async function tryRunLlmAgent<T>(input: {
       promptVersion: input.promptVersion,
       input: input.payload,
       traceId: input.traceId,
+      systemInstruction: input.systemInstruction,
       validate: input.validate
     });
     if (!result.validationResult.valid) {

@@ -14,6 +14,8 @@ import {
   type WorkflowStepStatus
 } from "@class-reflect/shared-types";
 import { Pool } from "pg";
+import { computeEffectiveSpeaker, computeEffectiveText } from "./transcript-layers";
+import { reconstructTranscriptSentences, type SpeakerIdentity } from "./transcript-reconstruction";
 
 type Queryable = Pick<Pool, "query">;
 
@@ -136,8 +138,25 @@ export type PersistTranscriptSegmentInput = {
   sourceMeta?: Record<string, unknown>;
 };
 
+type TranscriptLayerRow = Record<string, unknown> & {
+  id: unknown;
+  start_ms: unknown;
+  end_ms: unknown;
+  speaker_label?: unknown;
+  raw_text?: unknown;
+  agent_normalized_text?: unknown;
+  teacher_edited_text?: unknown;
+  agent_speaker_role?: unknown;
+  agent_speaker_identity_id?: unknown;
+  teacher_speaker_role?: unknown;
+  teacher_speaker_identity_id?: unknown;
+  confidence?: unknown;
+  agent_confidence?: unknown;
+};
+
 let pool: Pool | null = null;
 let lessonColumnCache: Set<string> | null = null;
+const tableColumnCache = new Map<string, Set<string>>();
 
 function getPool() {
   if (pool) return pool;
@@ -397,8 +416,15 @@ export async function getTeachingEvidenceSource(input: {
       start_ms,
       end_ms,
       speaker_label,
-      coalesce(original_text, raw_original_text, '') as text,
-      confidence
+      raw_text,
+      agent_normalized_text,
+      teacher_edited_text,
+      agent_speaker_role,
+      agent_speaker_identity_id,
+      teacher_speaker_role,
+      teacher_speaker_identity_id,
+      confidence,
+      agent_confidence
     from transcript_segments
     where lesson_id = $1 and video_id = $2
     order by start_ms
@@ -413,14 +439,7 @@ export async function getTeachingEvidenceSource(input: {
       id: String(lesson.id),
       lessonFormat: normalizeLessonFormat(lesson.lesson_format)
     },
-    transcriptSegments: segmentResult.rows.map((row) => ({
-      id: String(row.id),
-      startMs: Number(row.start_ms || 0),
-      endMs: Number(row.end_ms || 0),
-      speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
-      text: String(row.text || ""),
-      confidence: row.confidence == null ? null : Number(row.confidence)
-    })),
+    transcriptSegments: segmentResult.rows.map(mapTranscriptLayerRow),
     metrics
   };
 }
@@ -439,43 +458,58 @@ export async function saveTranscriptSegments(input: {
     await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from transcript_segments where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
 
+    const reconstruction = reconstructTranscriptSentences(input.segments, {
+      lessonId: input.lessonId,
+      videoId: input.videoId
+    });
+    await saveSpeakerRegistry(client, input.lessonId, reconstruction.speakerRegistry.identities);
+
     const saved: TranscriptSegment[] = [];
-    for (const segment of input.segments) {
+    for (const sentence of reconstruction.sentences) {
       const result = await client.query(`
         insert into transcript_segments
           (
+            id,
             lesson_id,
             video_id,
             start_ms,
             end_ms,
             speaker_label,
-            original_text,
+            raw_text,
             raw_original_text,
+            source_segment_ids,
+            timing_precision,
+            raw_speaker_ids,
+            delivery_features,
+            needs_human_review,
+            review_reason,
+            review_status,
             translated_text,
             raw_translated_text,
             confidence,
             source
           )
-        values ($1, $2, $3, $4, $5, $6, $6, null, null, $7, 'asr')
-        returning id, start_ms, end_ms, speaker_label, original_text, confidence
+        values ($1, $2, $3, $4, $5, $6, $7, $7, $8::jsonb, $9, $10::jsonb, $11::jsonb, $12, $13, $14, null, null, $15, 'asr')
+        returning id, start_ms, end_ms, speaker_label, raw_text, agent_normalized_text, teacher_edited_text, confidence
       `, [
+        sentence.id,
         input.lessonId,
         input.videoId,
-        segment.startMs,
-        segment.endMs,
-        segment.speakerLabel || formatSpeakerLabel(segment.speakerId),
-        segment.text,
-        segment.confidence ?? null
+        sentence.startMs,
+        sentence.endMs,
+        sentence.speakerLabel,
+        sentence.rawText,
+        JSON.stringify(sentence.sourceSegmentIds),
+        sentence.timingPrecision,
+        JSON.stringify(sentence.rawSpeakerIds),
+        JSON.stringify(sentence.deliveryFeatures),
+        sentence.requiresReview,
+        sentence.reviewReason,
+        sentence.requiresReview ? "requires_review" : "pending_review",
+        averageSourceConfidence(input.segments, sentence.sourceSegmentIds)
       ]);
       const row = result.rows[0];
-      saved.push({
-        id: String(row.id),
-        startMs: Number(row.start_ms || 0),
-        endMs: Number(row.end_ms || 0),
-        speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
-        text: String(row.original_text || ""),
-        confidence: row.confidence == null ? null : Number(row.confidence)
-      });
+      saved.push(mapTranscriptLayerRow(row));
     }
     await client.query("update lessons set updated_at = now() where id = $1", [input.lessonId]);
     await client.query("commit");
@@ -498,21 +532,21 @@ export async function listTranscriptSegments(input: {
       start_ms,
       end_ms,
       speaker_label,
-      coalesce(original_text, raw_original_text, '') as text,
-      confidence
+      raw_text,
+      agent_normalized_text,
+      teacher_edited_text,
+      agent_speaker_role,
+      agent_speaker_identity_id,
+      teacher_speaker_role,
+      teacher_speaker_identity_id,
+      confidence,
+      agent_confidence
     from transcript_segments
     where lesson_id = $1 and video_id = $2
     order by start_ms
   `, [input.lessonId, input.videoId]);
 
-  return result.rows.map((row) => ({
-    id: String(row.id),
-    startMs: Number(row.start_ms || 0),
-    endMs: Number(row.end_ms || 0),
-    speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
-    text: String(row.text || ""),
-    confidence: row.confidence == null ? null : Number(row.confidence)
-  }));
+  return result.rows.map(mapTranscriptLayerRow);
 }
 
 export async function updateTranscriptSegmentsProjection(input: {
@@ -527,9 +561,14 @@ export async function updateTranscriptSegmentsProjection(input: {
       await client.query(`
         update transcript_segments
         set
-          original_text = $4,
-          speaker_label = $5,
-          confidence = coalesce($6, confidence),
+          agent_normalized_text = nullif($4, raw_text),
+          agent_speaker_role = $5,
+          agent_speaker_identity_id = $6,
+          agent_confidence = coalesce($7, agent_confidence),
+          agent_change_types = case when nullif($4, raw_text) is null then agent_change_types else jsonb_build_array('agent_patch') end,
+          needs_human_review = false,
+          review_reason = null,
+          version = version + 1,
           source = 'transcript_agent',
           updated_at = now()
         where lesson_id = $1
@@ -540,7 +579,8 @@ export async function updateTranscriptSegmentsProjection(input: {
         input.videoId,
         segment.id,
         segment.text,
-        segment.speakerLabel || "未知",
+        inferRepositorySpeakerRole(segment.speakerLabel),
+        inferRepositorySpeakerIdentityId(segment.speakerLabel),
         segment.confidence ?? null
       ]);
     }
@@ -626,28 +666,70 @@ export async function updateTranscriptSegmentText(input: {
   lessonId: string;
   segmentId: string;
   editedText: string;
+  speakerRole?: string;
+  speakerIdentityId?: string;
   reviewerId?: string;
 }): Promise<TranscriptSegment | null> {
-  const result = await getPool().query(`
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    const result = await client.query(`
     update transcript_segments
     set
-      original_text = $3,
+      teacher_edited_text = $3,
+      teacher_speaker_role = coalesce($5, teacher_speaker_role),
+      teacher_speaker_identity_id = coalesce($6, teacher_speaker_identity_id),
+      review_status = 'reviewed',
+      needs_human_review = false,
+      review_reason = null,
       reviewer_id = $4,
       reviewed_at = now(),
+      version = version + 1,
       updated_at = now()
     where lesson_id = $1 and id = $2
-    returning id, start_ms, end_ms, speaker_label, original_text, confidence
-  `, [input.lessonId, input.segmentId, input.editedText, input.reviewerId || "demo-teacher"]);
-  const row = result.rows[0];
-  if (!row) return null;
-  return {
-    id: String(row.id),
-    startMs: Number(row.start_ms || 0),
-    endMs: Number(row.end_ms || 0),
-    speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
-    text: String(row.original_text || ""),
-    confidence: row.confidence == null ? null : Number(row.confidence)
-  };
+    returning
+      id,
+      start_ms,
+      end_ms,
+      speaker_label,
+      raw_text,
+      agent_normalized_text,
+      teacher_edited_text,
+      agent_speaker_role,
+      agent_speaker_identity_id,
+      teacher_speaker_role,
+      teacher_speaker_identity_id,
+      confidence,
+      agent_confidence
+  `, [
+      input.lessonId,
+      input.segmentId,
+      input.editedText,
+      input.reviewerId || "demo-teacher",
+      input.speakerRole || null,
+      input.speakerIdentityId || null
+    ]);
+    if (await tableHasColumn("evidence_cards", "transcript_segment_ids", client)) {
+      await client.query(`
+        update evidence_cards
+        set
+          review_status = case when review_status in ('accepted', 'edited_and_accepted') then 'needs_more_context' else review_status end,
+          raw_json = jsonb_set(coalesce(raw_json, '{}'::jsonb), '{stale}', 'true'::jsonb, true),
+          updated_at = now()
+        where lesson_id = $1
+          and transcript_segment_ids @> $2::jsonb
+      `, [input.lessonId, JSON.stringify([input.segmentId])]);
+    }
+    await client.query("commit");
+    const row = result.rows[0];
+    if (!row) return null;
+    return mapTranscriptLayerRow(row);
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function saveClassroomEvents(input: {
@@ -918,7 +1000,7 @@ export async function getTranslationTarget(input: {
     select
       id,
       lesson_id,
-      coalesce(original_text, raw_original_text, '') as original_text,
+      coalesce(teacher_edited_text, agent_normalized_text, raw_text, raw_original_text, original_text, '') as original_text,
       translated_text
     from transcript_segments
     where lesson_id = $1 and id = $2
@@ -968,7 +1050,7 @@ export async function saveTranslationResult(input: {
     returning
       id,
       lesson_id,
-      coalesce(original_text, raw_original_text, '') as original_text,
+      coalesce(teacher_edited_text, agent_normalized_text, raw_text, raw_original_text, original_text, '') as original_text,
       translated_text
   `, [input.lessonId, input.targetId, input.translatedText]);
   const row = result.rows[0];
@@ -1523,6 +1605,21 @@ async function getLessonColumns() {
   return lessonColumnCache;
 }
 
+async function tableHasColumn(tableName: string, columnName: string, client: Queryable = getPool()) {
+  const cacheKey = `public.${tableName}`;
+  let columns = tableColumnCache.get(cacheKey);
+  if (!columns) {
+    const result = await client.query(`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = $1
+    `, [tableName]);
+    columns = new Set(result.rows.map((row) => row.column_name));
+    tableColumnCache.set(cacheKey, columns);
+  }
+  return columns.has(columnName);
+}
+
 function addColumn(entries: Array<[string, unknown]>, columns: Set<string>, column: string, value: unknown) {
   if (columns.has(column)) entries.push([column, value]);
 }
@@ -1642,6 +1739,96 @@ function mapWorkflowStepRow(row: Record<string, unknown>): WorkflowStepRunRecord
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at)
   };
+}
+
+function mapTranscriptLayerRow(row: TranscriptLayerRow): TranscriptSegment {
+  const speaker = computeEffectiveSpeaker({
+    speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
+    agentSpeakerRole: row.agent_speaker_role == null ? null : String(row.agent_speaker_role),
+    agentSpeakerIdentityId: row.agent_speaker_identity_id == null ? null : String(row.agent_speaker_identity_id),
+    teacherSpeakerRole: row.teacher_speaker_role == null ? null : String(row.teacher_speaker_role),
+    teacherSpeakerIdentityId: row.teacher_speaker_identity_id == null ? null : String(row.teacher_speaker_identity_id)
+  });
+  return {
+    id: String(row.id),
+    startMs: Number(row.start_ms || 0),
+    endMs: Number(row.end_ms || 0),
+    speakerLabel: speaker.speakerLabel,
+    text: computeEffectiveText({
+      rawText: row.raw_text == null ? "" : String(row.raw_text),
+      agentNormalizedText: row.agent_normalized_text == null ? null : String(row.agent_normalized_text),
+      teacherEditedText: row.teacher_edited_text == null ? null : String(row.teacher_edited_text)
+    }),
+    confidence: row.agent_confidence == null
+      ? row.confidence == null ? null : Number(row.confidence)
+      : Number(row.agent_confidence)
+  };
+}
+
+async function saveSpeakerRegistry(client: Queryable, lessonId: string, identities: SpeakerIdentity[]) {
+  for (const identity of identities) {
+    await client.query(`
+      insert into transcript_speaker_identities (
+        id,
+        lesson_id,
+        role,
+        raw_speaker_ids,
+        display_label,
+        confidence,
+        source,
+        locked
+      )
+      values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
+      on conflict (id) do update set
+        raw_speaker_ids = excluded.raw_speaker_ids,
+        display_label = case when transcript_speaker_identities.locked then transcript_speaker_identities.display_label else excluded.display_label end,
+        confidence = greatest(coalesce(transcript_speaker_identities.confidence, 0), coalesce(excluded.confidence, 0)),
+        source = case when transcript_speaker_identities.locked then transcript_speaker_identities.source else excluded.source end,
+        updated_at = now()
+    `, [
+      identity.id,
+      lessonId,
+      identity.role,
+      JSON.stringify(identity.rawSpeakerIds),
+      identity.displayLabel,
+      identity.confidence,
+      identity.source,
+      identity.locked
+    ]);
+  }
+}
+
+function averageSourceConfidence(segments: PersistTranscriptSegmentInput[], sourceSegmentIds: string[]) {
+  const values = segments
+    .map((segment, index) => ({ id: String(segment.sourceMeta?.id || `seg-${index}`), confidence: segment.confidence }))
+    .filter((segment) => sourceSegmentIds.includes(segment.id) && segment.confidence != null)
+    .map((segment) => Number(segment.confidence));
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function inferRepositorySpeakerRole(label: string | null | undefined) {
+  if (!label) return null;
+  if (/教师|老师|teacher/i.test(label)) return "teacher";
+  if (/全班|齐答/.test(label)) return "students";
+  if (/多人/.test(label)) return "multiple";
+  if (/学生/.test(label)) return "student";
+  if (/未知/.test(label)) return "unknown";
+  return null;
+}
+
+function inferRepositorySpeakerIdentityId(label: string | null | undefined) {
+  const role = inferRepositorySpeakerRole(label);
+  if (role === "teacher") return "spk_teacher_1";
+  if (role === "students") return "spk_students";
+  if (role === "multiple") return "spk_multiple";
+  if (role === "unknown") return "spk_unknown";
+  if (role === "student") {
+    const match = label?.match(/学生\s*([A-Z]|[一二三四五六七八九十]|\d+)?/);
+    const suffix = match?.[1] || "1";
+    return `spk_student_${suffix}`;
+  }
+  return null;
 }
 
 function mapLessonSectionRow(row: Record<string, unknown>): LessonSection {

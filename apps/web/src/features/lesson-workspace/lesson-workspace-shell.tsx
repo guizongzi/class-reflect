@@ -149,6 +149,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   const [activeTranscriptId, setActiveTranscriptId] = useState<string | null>(null);
   const [videoCurrentMs, setVideoCurrentMs] = useState(0);
   const [editingTextById, setEditingTextById] = useState<Record<string, string>>({});
+  const [editingSpeakerById, setEditingSpeakerById] = useState<Record<string, string>>({});
   const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
   const [translatingId, setTranslatingId] = useState<string | null>(null);
   const [translationError, setTranslationError] = useState<string | null>(null);
@@ -207,6 +208,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
           const textItems = buildLessonTextItems(detail);
           setLessonTexts(textItems);
           setEditingTextById(Object.fromEntries(flattenLessonTextItems(textItems).map((item) => [item.id, item.originalText])));
+          setEditingSpeakerById(Object.fromEntries(flattenLessonTextItems(textItems).map((item) => [item.id, speakerRoleValue(item.speakerLabel)])));
           setEvidenceCards(normalizeEvidenceCards(detail.evidenceCards));
           const loadedReports = normalizeReports(detail.reports);
           setReports(loadedReports);
@@ -285,26 +287,30 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
   async function saveLessonText(item: LessonTextItem) {
     if (!activeLessonId) return;
     const editedSummaryText = editingTextById[item.id] || item.originalText;
+    const speakerRole = item.targetType === "segment" ? editingSpeakerById[item.id] || speakerRoleValue(item.speakerLabel) : undefined;
     setSavingSectionId(item.id);
     setTranslationError(null);
     try {
       const targetPath = item.targetType === "section" ? "sections" : "segments";
       const result = await patchJson<{
         section?: { summaryText?: string };
-        segment?: { text?: string; originalText?: string };
+        segment?: { text?: string; originalText?: string; speakerLabel?: string | null };
       }>(`/api/lessons/${activeLessonId}/transcripts/${targetPath}/${item.id}`, {
-        editedSummaryText
+        editedSummaryText,
+        ...(speakerRole ? { speakerRole } : {})
       });
       const savedText = result.section?.summaryText || result.segment?.text || result.segment?.originalText || editedSummaryText;
+      const savedSpeakerLabel = result.segment?.speakerLabel ?? item.speakerLabel ?? null;
       setLessonTexts((items) => items.map((current) => {
         if (current.id === item.id) return { ...current, originalText: savedText };
         if (!current.sentences?.length) return current;
         return {
           ...current,
-          sentences: current.sentences.map((sentence) => sentence.id === item.id ? { ...sentence, originalText: savedText } : sentence)
+          sentences: current.sentences.map((sentence) => sentence.id === item.id ? { ...sentence, originalText: savedText, speakerLabel: savedSpeakerLabel } : sentence)
         };
       }));
       setEditingTextById((drafts) => ({ ...drafts, [item.id]: savedText }));
+      if (item.targetType === "segment") setEditingSpeakerById((drafts) => ({ ...drafts, [item.id]: speakerRoleValue(savedSpeakerLabel) }));
     } catch (error) {
       setTranslationError(error instanceof Error ? error.message : "保存校订失败");
     } finally {
@@ -446,6 +452,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
     setLessonTexts([]);
     setPendingRetryStepKey(null);
     setEditingTextById({});
+    setEditingSpeakerById({});
     setEvidenceCards([]);
     setReports([]);
     setReportDraft("");
@@ -744,12 +751,14 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
                   onSelect={(item) => jumpToTranscript(item)}
                 />
                 <TranscriptEditor
+                  editingSpeakerById={editingSpeakerById}
                   editingTextById={editingTextById}
                   item={activeTranscript}
                   savingSectionId={savingSectionId}
                   translatingId={translatingId}
                   onJump={jumpToTranscript}
                   onSave={(item) => void saveLessonText(item)}
+                  onSpeakerChange={(id, role) => setEditingSpeakerById((drafts) => ({ ...drafts, [id]: role }))}
                   onTextChange={(id, text) => setEditingTextById((drafts) => ({ ...drafts, [id]: text }))}
                   onTranslate={(item) => void translateTextItem(item, Boolean(item.translatedText))}
                 />
@@ -1052,21 +1061,25 @@ function TranscriptTimeline({
 }
 
 function TranscriptEditor({
+  editingSpeakerById,
   editingTextById,
   item,
   savingSectionId,
   translatingId,
   onJump,
   onSave,
+  onSpeakerChange,
   onTextChange,
   onTranslate
 }: {
+  editingSpeakerById: Record<string, string>;
   editingTextById: Record<string, string>;
   item: LessonTextItem;
   savingSectionId: string | null;
   translatingId: string | null;
   onJump: (item: LessonTextItem) => void;
   onSave: (item: LessonTextItem) => void;
+  onSpeakerChange: (id: string, role: string) => void;
   onTextChange: (id: string, text: string) => void;
   onTranslate: (item: LessonTextItem) => void;
 }) {
@@ -1088,6 +1101,18 @@ function TranscriptEditor({
                 {formatTimestamp(sentence.startMs)}
               </button>
               <span className="speaker-chip">{sentence.speakerLabel || "未知"}</span>
+              <select
+                aria-label="校订说话人"
+                className="speaker-select"
+                value={editingSpeakerById[sentence.id] ?? speakerRoleValue(sentence.speakerLabel)}
+                onChange={(event) => onSpeakerChange(sentence.id, event.currentTarget.value)}
+              >
+                <option value="teacher">教师</option>
+                <option value="student">学生</option>
+                <option value="students">全班</option>
+                <option value="multiple">多人</option>
+                <option value="unknown">未知</option>
+              </select>
               <textarea
                 aria-label="校订逐字稿句子"
                 value={editingTextById[sentence.id] ?? sentence.originalText}
@@ -1626,6 +1651,14 @@ function formatWorkflowSummary(status: WorkflowStatusResponse | null) {
     return "等待确认校订完成";
   }
   return `${formatWorkflowStepStatus(status.task.status, status.task.progress || 0)} · ${status.task.currentStep || "未开始"}`;
+}
+
+function speakerRoleValue(label: string | null | undefined) {
+  if (/教师|老师|teacher/i.test(label || "")) return "teacher";
+  if (/全班|齐答/.test(label || "")) return "students";
+  if (/多人/.test(label || "")) return "multiple";
+  if (/学生/.test(label || "")) return "student";
+  return "unknown";
 }
 
 function getProgressStageIndex(input: { uploadStep: UploadStep; workflowStatus: WorkflowStatusResponse | null }) {

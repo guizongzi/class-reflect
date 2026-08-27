@@ -8,6 +8,10 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
+    "eval:mock": "tsc -p tsconfig.json && node dist/transcript-normalizer-agent/eval/cli.js",
+    "eval:real": "tsc -p tsconfig.json && node dist/transcript-normalizer-agent/eval/cli.js --real",
+    "eval:real:diagnose": "tsc -p tsconfig.json && node dist/transcript-normalizer-agent/eval/real-diagnostic-cli.js",
     "agent:run": "node dist/standalone.js"
   },
   "dependencies": {

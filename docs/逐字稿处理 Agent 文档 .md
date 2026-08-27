@@ -1,112 +1,207 @@
-# Class Reflect 逐字稿处理 AI Agent 设计文档
+# Class Reflect 逐字稿处理 Agent 设计文档
 
 ## 1. 文档目标
 
-逐字稿处理 Agent，以下简称 **Transcript Agent**，负责将语音识别系统输出的原始 ASR 结果转换为：
+逐字稿处理 Agent，以下简称 **Transcript Agent**，负责将语音识别系统输出的原始 ASR 数据，转换为一套：
 
-1. 适合前端时间轴阅读和人工校对的**展示版逐字稿**；
-2. 适合后续课堂结构识别、教学证据提取和统计分析的**分析版逐字稿**。
+- 可追溯；
+- 可按句编辑；
+- 可定位到视频时间；
+- 可区分教师、单个学生、群体发言和未知说话人；
+- 可保留语气词、重复、停顿、自我修正等课堂表达信号；
+- 可直接供后续教学分析使用；
+- 不需要下游 Agent 重复读取多份完整逐字稿；
 
-两个版本必须来源于同一份标准化底层数据，确保：
+的标准化课堂逐字稿数据。
 
-- 文本内容可追溯；
-- 每句话均可定位到视频时间；
-- 前端修改可以同步影响后续分析；
-- 停顿、重复、错漏和说话人不确定性不会因文本清洗而丢失；
-- 后续 Agent 不需要重新解析原始 ASR。
+Transcript Agent 不负责生成两份独立维护的“展示稿”和“分析稿”。
 
-------
+系统统一维护 Segment/Sentence 级事实数据，再根据使用场景动态生成：
 
-## 2. 核心设计原则
+- 教师前端展示投影；
+- 后续分析输入；
+- 局部证据原文；
+- 章节与时间轴。
 
-### 2.1 单一事实来源
+## 2. 核心架构
 
-系统不应分别生成两份互不关联的逐字稿。
+推荐数据流：
 
-推荐结构：
-
-```text
-原始 ASR
-   ↓
-标准化逐字稿 Canonical Transcript
-   ├─ 前端展示版 Display Transcript
-   └─ 后续分析版 Analysis Transcript
+```
+原始 ASR Segment
+    ↓
+输入校验与预处理
+    ↓
+Sentence Reconstruction
+    ↓
+Speaker Registry 与角色映射
+    ↓
+Transcript Agent Patch
+    ↓
+确定性 Patch 合并
+    ↓
+deliveryFeatures 与 TranscriptEvent
+    ↓
+教师编辑
+    ↓
+Effective Text / Effective Speaker
+    ↓
+├─ Section Builder
+├─ 前端展示投影
+├─ 下游分析 Input Builder
+└─ Evidence 引用与报告
 ```
 
-标准化逐字稿是唯一事实来源。
+系统不保存以下多套独立文档：
 
-前端展示版主要优化阅读体验，分析版主要保留完整信号。两者通过稳定的句子 ID 和时间轴关联。
-
-### 2.2 不总结、不扩写
-
-Transcript Agent 不是摘要 Agent，不得：
-
-- 总结教师讲解；
-- 将多句话概括为一句；
-- 补充音频中未出现的信息；
-- 根据教学常识改写原意；
-- 将学生错误答案自动纠正为正确答案；
-- 为了语言流畅而删除具有分析价值的表达。
-
-### 2.3 句子是最小事实单位
-
-每一句话必须具备独立的：
-
-- 句子 ID；
-- 开始时间；
-- 结束时间；
-- 标准化说话人；
-- 原始文本；
-- 展示文本；
-- 置信度；
-- 分析信号。
-
-后续 Evidence Agent 引用课堂证据时，应引用句子 ID，而不是只引用一段纯文本。
-
-### 2.4 语义段是前端主要展示单位
-
-前端可以按小段显示，但这些段落必须由句子组成。
-
-段落切分应优先依据：
-
-- 语义主题；
-- 教学活动；
-- 交互轮次；
-- 说话人关系；
-- 教学阶段转换。
-
-字数只作为上限约束，不作为首要切分依据。
-
-### 2.5 展示清洗不能销毁分析信息
-
-例如原始音频为：
-
-```text
-嗯……那个……这个答案，对，对，是十八。
+```
+完整原始稿
+完整 Agent 稿
+完整教师稿
+完整分析稿
+完整展示稿
 ```
 
-前端可以显示：
+而是在每个句子或 Segment 上维护必要字段，并动态构建使用视图。
 
-```text
-这个答案是十八。
+## 3. 核心设计原则
+
+### 3.1 原始 ASR 永不覆盖
+
+`rawText` 是原始事实来源。
+
+任何 Agent 修正、教师编辑、前端清理或下游分析，都不得覆盖原始 ASR 数据。
+
+原始文本用于：
+
+- ASR 错误回溯；
+- 语气词和重复分析；
+- 自我修正分析；
+- 原始课堂证据核查；
+- Agent 输出质量评估；
+- 教师修改差异分析。
+
+### 3.2 Agent 与教师修改分层保存
+
+每个句子或 Segment 维护：
+
+```
+rawText
+agentNormalizedText
+teacherEditedText
 ```
 
-但分析版必须保留：
+含义分别为：
 
-- 填充词；
-- 停顿时长；
-- 重复表达；
-- 自我修正；
-- 原始文本；
-- 清洗操作记录。
+- `rawText`：原始 ASR 文本，不可修改；
+- `agentNormalizedText`：Agent 纠错后的文本，可为空；
+- `teacherEditedText`：教师人工编辑后的文本，可为空。
 
-------
+其中：
 
-## 3. 系统输入
+```
+agentNormalizedText = null
+```
 
-Transcript Agent 接收 ASR 结果。输入应尽可能包含词级或片段级时间轴。
+表示 Agent 未修改该句。
 
-```ts
+```
+teacherEditedText = null
+```
+
+表示教师未修改该句。
+
+不额外持久化 `effectiveText`。
+
+### 3.3 有效语义文本动态计算
+
+后续内容、术语、知识点和教学证据分析统一使用：
+
+```
+teacherEditedText
+→ 否则 agentNormalizedText
+→ 否则 rawText
+```
+
+对应纯函数：
+
+```
+function resolveEffectiveText(sentence: TranscriptSentence): string {
+  return (
+    sentence.teacherEditedText ??
+    sentence.agentNormalizedText ??
+    sentence.rawText
+  );
+}
+```
+
+该逻辑必须集中实现，不能散落在不同业务模块中。
+
+### 3.4 不生成两份完整逐字稿
+
+数据库可以在单个 Sentence 上保存三层文本字段，但这不等于维护三份完整文档。
+
+前端与分析模块只通过投影读取需要的字段。
+
+下游 Agent 默认只接收：
+
+- effective semantic text；
+- compact delivery features；
+- 时间轴；
+- effective speaker；
+- 必要的局部 raw excerpt。
+
+不得默认同时发送完整原始稿和完整教师稿。
+
+### 3.5 Agent 只处理语言理解任务
+
+Transcript Agent 负责：
+
+- 明显 ASR 错误修正；
+- 专业术语修正；
+- 标点和可读性整理；
+- 说话人角色推断；
+- 歧义与人工复核标记；
+- 重复、自我修正等类型判断；
+- 可选章节边界建议。
+
+Transcript Agent 不负责：
+
+- 统计句子数量；
+- 统计教师和学生发言数量；
+- 生成完整分析 projection；
+- 生成完整前端文档；
+- 计算确定性课堂指标；
+- 决定工作流下一步；
+- 覆盖数据库原始数据。
+
+### 3.6 未确认内容不得被“修正确”
+
+Transcript Agent 只能修复高置信度 ASR 错误。
+
+不得：
+
+- 把学生错误答案改成正确答案；
+- 把教师未明确修正的口误自动改正确；
+- 根据学科常识补充原音频未出现的内容；
+- 把不完整表达扩写成完整讲解；
+- 猜测无法确认的专业术语；
+- 猜测数学公式、数字或单位；
+- 为提升可读性而改变事实含义。
+
+不确定时应：
+
+```
+保留原文
++
+needsHumanReview = true
+```
+
+## 4. 系统输入
+
+输入优先采用 ASR Segment 和词级时间数据。
+
+```
 interface AsrSegment {
   id: string;
   startMs: number;
@@ -124,507 +219,580 @@ interface AsrWord {
   text: string;
   startMs: number;
   endMs: number;
+
   confidence?: number;
   speakerId?: string;
 }
 ```
 
-如果 ASR 只能提供片段级时间，Agent 可以在片段内部推断句子边界，但必须标记时间轴精度较低。
+输入必须保留：
 
-------
+- 原始 Segment ID；
+- 原始 speaker ID；
+- 开始时间；
+- 结束时间；
+- 原始文本；
+- 可用的 ASR 置信度；
+- 可用的词级时间信息。
 
-## 4. 标准化底层数据
+## 5. Sentence Reconstruction
 
-标准化逐字稿同时服务于前端版和分析版。
+### 5.1 为什么需要 Sentence
 
-```ts
-interface CanonicalTranscript {
-  lessonId: string;
-  language: string;
-  durationMs: number;
+ASR Segment 不一定等于自然语言句子。
 
-  speakers: CanonicalSpeaker[];
-  sentences: TranscriptSentence[];
-  blocks: TranscriptBlock[];
-  events: TranscriptEvent[];
+常见情况包括：
 
-  quality: TranscriptQuality;
-  processing: TranscriptProcessingMetadata;
-}
+- 一个 Segment 包含多个完整句子；
+- 一句话被拆成多个 Segment；
+- 半句话因 ASR 分片被分开；
+- 问题和回答被错误合并；
+- 说话人切换发生在同一 Segment 内。
+
+因此系统需要将 ASR Segment 重建为可引用的 Transcript Sentence。
+
+### 5.2 Sentence 数据结构
+
 ```
-
-------
-
-## 5. 句子数据结构
-
-```ts
 interface TranscriptSentence {
   id: string;
+  lessonId: string;
   order: number;
 
   startMs: number;
   endMs: number;
-  timingPrecision: "word" | "segment" | "estimated";
 
-  speakerId: string;
-  speakerRole:
-    | "teacher"
-    | "student"
-    | "students"
-    | "unknown";
+  timingPrecision:
+    | "word"
+    | "segment"
+    | "estimated";
+
+  sourceSegmentIds: string[];
+
+  rawText: string;
+  agentNormalizedText?: string | null;
+  teacherEditedText?: string | null;
 
   rawSpeakerIds: string[];
 
-  rawText: string;
-  normalizedText: string;
-  displayText: string;
+  agentSpeakerRole?: SpeakerRole | null;
+  agentSpeakerIdentityId?: string | null;
 
-  transcriptionConfidence?: number;
-  speakerConfidence?: number;
-  normalizationConfidence?: number;
+  teacherSpeakerRole?: SpeakerRole | null;
+  teacherSpeakerIdentityId?: string | null;
 
-  flags: TranscriptFlag[];
-  signals: SentenceAnalysisSignals;
+  transcriptionConfidence?: number | null;
+  speakerConfidence?: number | null;
+  agentConfidence?: number | null;
 
-  sourceSegmentIds: string[];
-  revision?: TranscriptRevision;
+  agentChangeTypes?: TranscriptChangeType[];
+
+  needsHumanReview: boolean;
+  reviewReason?: string | null;
+
+  deliveryFeatures: DeliveryFeatures;
+
+  version: number;
 }
 ```
 
-### 5.1 三种文本字段
+### 5.3 Sentence 切分依据
 
-#### rawText
-
-从 ASR 中恢复出的原始文本，仅允许合并相邻识别片段，不做语言清洗。
-
-用途：
-
-- 追溯；
-- 排查 ASR 错误；
-- 重新处理；
-- 比较人工修订前后的差异。
-
-#### normalizedText
-
-保留原始表达特征，但完成：
-
-- 标点恢复；
-- 句子边界修复；
-- 明显同音错字修正；
-- 数字和专有名词规范化；
-- 相邻 ASR 碎片合并。
-
-例如：
-
-```text
-嗯这个这个角应该是九十度
-```
-
-标准化后：
-
-```text
-嗯，这个、这个角应该是九十度。
-```
-
-#### displayText
-
-提供给普通前端用户阅读的版本，可以轻度移除：
-
-- 无意义填充词；
-- 明显口吃重复；
-- 不影响含义的起句残片；
-- 纯识别噪声。
-
-例如：
-
-```text
-这个角应该是九十度。
-```
-
-但涉及教学分析的实质性内容不得删除，例如：
-
-- 教师重复追问；
-- 学生错误答案；
-- 教师自我纠正；
-- 具有课堂管理意义的重复指令；
-- 表达不清导致学生误解的句子。
-
-------
-
-## 6. 说话人识别与校正
-
-ASR 的说话人分离结果只能作为输入信号，不能直接视为最终身份。
-
-### 6.1 标准化角色
-
-最终支持：
-
-```text
-Teacher
-Student A
-Student B
-Student C
-...
-Students
-Unknown
-```
-
-其中：
-
-- `Teacher`：主要授课教师；
-- `Student A/B/C`：本节课内稳定编号的单个学生；
-- `Students`：多人齐答、全班朗读或无法拆分的群体发言；
-- `Unknown`：证据不足，不能可靠判断身份。
-
-### 6.2 教师识别依据
-
-应综合判断，而不是仅按讲话时长判断：
-
-- 是否持续讲解知识；
-- 是否布置任务或发布指令；
-- 是否频繁发起提问；
-- 是否对学生答案进行评价；
-- 是否控制活动开始、停止和转换；
-- 是否进行总结、反馈或课堂管理；
-- 是否在整节课中保持较稳定的主导身份。
-
-### 6.3 学生稳定编号
-
-学生编号只要求在同一节课内稳定，不要求跨课程识别真实身份。
-
-例如：
-
-```text
-ASR Speaker 3 → Student A
-ASR Speaker 5 → Student B
-```
-
-如果同一个学生被 ASR 错拆为两个 speaker，可结合以下信息合并：
-
-- 声纹相似度；
-- 相邻对话关系；
-- 座位或视频位置；
-- 语言习惯；
-- 讲话时间是否存在冲突；
-- 多模态身份跟踪结果。
-
-如果证据不足，应保留不同学生编号或标记为 Unknown，不得强行合并。
-
-### 6.4 群体发言
-
-出现以下情况可标记为 `Students`：
-
-- 全班齐读；
-- 多人同时回答相同内容；
-- ASR 无法区分多个重叠学生；
-- 教师提出封闭式问题后出现群体短回答。
-
-### 6.5 说话人不确定性
-
-每句话应保留：
-
-```ts
-speakerConfidence: number;
-rawSpeakerIds: string[];
-```
-
-后续分析在说话人置信度过低时，应降低相关结论的可信度。
-
-例如不能因为一次低置信度识别，就断言某一位学生连续回答了三个问题。
-
-------
-
-## 7. 句子切分规则
-
-句子必须是可单独引用、可单独定位和基本可独立理解的最小语言单位。
-
-### 7.1 优先切分依据
+优先依据：
 
 - 完整陈述结束；
 - 完整问题结束；
-- 明确指令结束；
-- 说话人切换；
+- 指令结束；
+- 说话人发生变化；
 - 较长停顿；
-- 自我修正前后形成不同语义；
-- 问答轮次转换；
-- 话题或教学行为发生转换。
+- 问答轮次变化；
+- 自我修正形成两个语义阶段；
+- 教学活动或话题转换。
 
-### 7.2 不应机械切分的情况
+不应机械切分：
 
-以下内容可以保持在同一句：
+- 同一个问题中的多个条件；
+- 未结束的数学推导；
+- 同一条课堂指令；
+- 因 ASR 分片产生的半句话；
+- 很短但语义连续的表达。
 
-- 一个问题的多个并列条件；
-- 同一条完整课堂指令；
-- 一个未结束的数学推导；
-- 因 ASR 分片导致的半句话；
-- 很短、连续且语义紧密的表达。
+短回答如：
 
-### 7.3 句子长度
+```
+不会
+十八
+不知道
+是
+不是
+```
 
-不设置严格字数要求，但建议：
+如果具有独立课堂意义，应保留为独立 Sentence。
 
-- 常见句子：5～80个中文字符；
-- 超过120字时检查是否包含多个独立语义；
-- 过短碎片应尝试与相邻句合并；
-- 单独有分析意义的短回答，如“不会”“十八”“不知道”，必须保留为独立句子。
+### 5.4 Sentence ID 与来源映射
 
-------
+每个 Sentence 必须：
 
-## 8. 前端展示版设计
+- 有稳定 ID；
+- 记录来源 Segment ID；
+- 保留时间范围；
+- 支持回溯原始 ASR。
 
-前端展示版由标准化逐字稿派生，不重新调用 AI 改写。
+如果教师后续合并或拆分 Sentence，应保留旧 ID 到新 ID 的映射关系。
 
-```ts
-interface DisplayTranscript {
-  lessonId: string;
-  blocks: DisplayTranscriptBlock[];
+```
+interface TranscriptSentenceMapping {
+  oldSentenceId: string;
+  newSentenceIds: string[];
+  operation: "split" | "merge" | "replace";
 }
+```
 
-interface DisplayTranscriptBlock {
+## 6. Speaker Registry
+
+### 6.1 角色与身份分离
+
+必须区分：
+
+```
+Speaker Role
+```
+
+和：
+
+```
+Speaker Identity
+```
+
+角色表示：
+
+- 教师；
+- 单个学生；
+- 群体学生；
+- 多人重叠；
+- 未知。
+
+身份表示：
+
+- Teacher 1；
+- Student A；
+- Student B；
+- Student C；
+- Unknown 1。
+
+### 6.2 Speaker Role
+
+```
+type SpeakerRole =
+  | "teacher"
+  | "student"
+  | "students"
+  | "multiple"
+  | "unknown";
+```
+
+含义：
+
+- `teacher`：主要授课教师；
+- `student`：可区分的单个学生；
+- `students`：全班齐答、小组统一发言或群体朗读；
+- `multiple`：多人重叠发言，无法可靠拆分；
+- `unknown`：证据不足。
+
+### 6.3 Canonical Speaker
+
+```
+interface CanonicalSpeaker {
   id: string;
-  order: number;
-
-  startMs: number;
-  endMs: number;
-
-  title?: string;
-  sentences: DisplayTranscriptSentence[];
-
-  characterCount: number;
-}
-
-interface DisplayTranscriptSentence {
-  id: string;
-  startMs: number;
-  endMs: number;
-
-  speakerLabel: string;
-  text: string;
-
-  confidenceLevel?: "high" | "medium" | "low";
-  editable: boolean;
-}
-```
-
-### 8.1 前端段落切分目标
-
-每个展示段落：
-
-- 最多500个中文字符；
-- 推荐150～350字；
-- 包含一个相对完整的语义或课堂活动；
-- 由若干完整句子组成；
-- 不得为满足字数要求而切断句子；
-- 不得将不同教学活动强行合并；
-- 很短但语义完整的段落允许低于150字。
-
-500字是硬上限，不是目标长度。
-
-### 8.1.1 展示段落标题要求
-
-每个展示段落必须生成一个对教师有意义的标题。标题用于时间轴和当前段落卡片，帮助教师快速判断“这一段在讲什么 / 在做什么”。
-
-标题不得使用纯序号或占位表达，例如：
-
-- `课堂片段 1`
-- `课堂片段 17`
-- `第 3 段`
-- `片段`
-- `教学内容`
-
-标题应优先由两部分组成：
-
-```text
-教学活动：核心内容
-```
-
-例如：
-
-- `导入与复习：分数的意义`
-- `问题探究：哪两个角相等`
-- `推理说明：角平分线依据`
-- `方法归纳：同类题处理步骤`
-- `练习讲评：判断分数单位`
-- `总结与作业：今天所学回顾`
-
-如果片段很短、无法稳定提取核心内容，也必须给出教学活动标题，例如：
-
-- `课堂导入`
-- `问题探究`
-- `推理说明`
-- `练习讲评`
-- `课堂组织`
-- `总结与作业`
-
-标题生成规则：
-
-1. 先判断教学活动类型，如导入、讲解、提问、推理、练习、反馈、组织、总结；
-2. 再从片段原文中提取可读关键词，如知识点、题目对象、学生回答对象、方法名称；
-3. 标题长度建议控制在 6～18 个中文字符；
-4. 标题必须来自片段内容或教学活动判断，不得臆造教材章节；
-5. 当前端展示已有旧数据时，若标题仍是占位表达，应按同样规则进行展示侧兜底改写。
-
-### 8.2 优先切段条件
-
-出现以下情况时，应优先新建段落：
-
-1. 教学主题发生变化；
-2. 从讲解转为提问；
-3. 从提问转为学生回答；
-4. 从全班教学转为小组或个人活动；
-5. 教师开始总结、反馈或纠错；
-6. 活动开始、结束或转换；
-7. 明显长时间等待后进入下一环节；
-8. 课堂管理事件打断原有教学流程；
-9. 视频或音频中出现显著场景变化。
-
-### 8.3 问答段落处理
-
-连续问答可以形成一个完整的小段：
-
-```text
-教师：为什么这个角是九十度？
-
-学生A：因为两条直线互相垂直。
-
-教师：对。那我们可以使用哪一个定理？
-```
-
-每句话仍保留自己的时间轴，前端只是在视觉上将其组织进同一个段落。
-
-### 8.4 前端交互建议
-
-前端应支持：
-
-- 点击句子跳转视频；
-- 视频播放时高亮当前句；
-- 按句编辑，而不是整段覆盖；
-- 显示低置信度提示；
-- 修改说话人身份；
-- 合并或拆分句子；
-- 查看原始识别文本；
-- 可选显示停顿、重叠或听不清标记；
-- 任何人工修改都形成修订记录。
-
-### 8.5 前端不默认展示的内容
-
-普通阅读模式不显示：
-
-- 填充词计数；
-- 重复次数；
-- 等待时长指标；
-- 语速；
-- ASR 内部 speaker ID；
-- 噪声详情；
-- 所有分析标签。
-
-但可以在“详细模式”或“校对模式”中提供。
-
-------
-
-## 9. 后续分析版设计
-
-分析版保留完整的句子、事件、信号和置信度。
-
-```ts
-interface AnalysisTranscript {
   lessonId: string;
 
-  speakers: CanonicalSpeaker[];
-  sentences: AnalysisSentence[];
-  events: TranscriptEvent[];
+  role: SpeakerRole;
+  displayLabel: string;
 
-  globalMetrics: TranscriptGlobalMetrics;
-  quality: TranscriptQuality;
+  rawSpeakerIds: string[];
+
+  confidence: number;
+
+  source:
+    | "asr"
+    | "agent"
+    | "teacher";
+
+  version: number;
 }
 ```
 
-分析版不应只提供纯文本大段，而应主要提供结构化数据。
+示例：
 
-### 9.1 分析句子
+```
+speaker_0 → teacher_1 → 教师
+speaker_2 → student_1 → 学生 A
+speaker_5 → student_2 → 学生 B
+```
 
-```ts
-interface AnalysisSentence {
-  id: string;
-  order: number;
+### 6.4 学生稳定编号
 
-  startMs: number;
-  endMs: number;
+学生编号只需在同一节课内稳定。
 
-  speakerId: string;
-  speakerRole: string;
+推荐按第一次可靠出现的顺序分配：
 
-  rawText: string;
-  normalizedText: string;
-  displayText: string;
+```
+student_1 → 学生 A
+student_2 → 学生 B
+student_3 → 学生 C
+```
 
-  flags: TranscriptFlag[];
-  signals: SentenceAnalysisSignals;
+同一个 raw speaker ID 在同一节课内，应保持一致映射。
 
-  transcriptionConfidence?: number;
-  speakerConfidence?: number;
+如果证据不足：
 
-  previousSentenceId?: string;
-  nextSentenceId?: string;
+```
+speakerRole = unknown
+identityId = null
+```
+
+不得凭文本内容随意创造学生 A/B/C。
+
+### 6.5 教师识别依据
+
+教师识别不能只依赖讲话时长。
+
+应综合：
+
+- 是否持续讲解知识；
+- 是否发布课堂指令；
+- 是否发起提问；
+- 是否评价学生回答；
+- 是否控制活动开始和结束；
+- 是否进行总结与反馈；
+- 是否承担课堂管理功能；
+- 是否在整节课中保持主导角色。
+
+### 6.6 教师人工修正
+
+教师可以修改：
+
+- speaker role；
+- speaker identity；
+- display label；
+- raw speaker 到 canonical speaker 的映射。
+
+有效说话人计算：
+
+```
+effectiveSpeakerRole =
+  teacherSpeakerRole ??
+  agentSpeakerRole ??
+  rawInferredRole ??
+  "unknown";
+effectiveSpeakerIdentityId =
+  teacherSpeakerIdentityId ??
+  agentSpeakerIdentityId ??
+  rawSpeakerId ??
+  null;
+```
+
+教师修改后，下游分析必须使用教师确认的说话人信息。
+
+## 7. Transcript Agent Patch Only 输出
+
+### 7.1 为什么采用 Patch Only
+
+LLM 不应返回完整逐字稿。
+
+它只返回发生变化的 Sentence。
+
+这样可以：
+
+- 降低输出 token；
+- 避免复制全文；
+- 防止遗漏或覆盖未修改数据；
+- 提高校验能力；
+- 保留 Agent 修改痕迹；
+- 更方便比较教师修改。
+
+### 7.2 Agent 输入
+
+```
+interface TranscriptAgentInput {
+  lessonId: string;
+
+  sentences: Array<{
+    id: string;
+
+    rawText: string;
+
+    startMs: number;
+    endMs: number;
+
+    rawSpeakerIds: string[];
+
+    transcriptionConfidence?: number;
+    speakerConfidence?: number;
+
+    previousContext?: string;
+    nextContext?: string;
+  }>;
+
+  glossary?: string[];
 }
 ```
 
-### 9.2 句级分析信号
+只发送必要上下文。
 
-```ts
-interface SentenceAnalysisSignals {
+不得发送：
+
+- 完整教师稿；
+- 完整 Agent 稿；
+- 展示 Projection；
+- 统计结果；
+- 数据库内部字段；
+- 重复的文本字段。
+
+### 7.3 Agent 输出
+
+```
+interface TranscriptAgentPatchOutput {
+  patches: TranscriptPatch[];
+  sectionBoundarySuggestions?: SectionBoundarySuggestion[];
+  warnings: string[];
+}
+
+interface TranscriptPatch {
+  sentenceId: string;
+
+  correctedText?: string;
+
+  speaker?: {
+    role?: SpeakerRole;
+    identityId?: string | null;
+  };
+
+  confidence: number;
+
+  changeTypes: TranscriptChangeType[];
+
+  needsHumanReview: boolean;
+  reviewReason?: string;
+}
+
+type TranscriptChangeType =
+  | "asr_correction"
+  | "term_correction"
+  | "punctuation"
+  | "speaker_role"
+  | "speaker_identity"
+  | "readability"
+  | "repetition_classification"
+  | "self_correction_classification"
+  | "uncertain";
+```
+
+未修改 Sentence 不应返回。
+
+### 7.4 禁止输出的字段
+
+Agent 不得返回：
+
+- 完整 transcript；
+- 时间戳覆盖；
+- 原始文本覆盖；
+- 完整 display sections；
+- 句子统计；
+- 教学指标；
+- 报告内容；
+- 课堂评价；
+- 不相关解释。
+
+## 8. Patch 合并与校验
+
+### 8.1 Patch 校验
+
+必须校验：
+
+- sentenceId 是否存在；
+- sentenceId 是否重复；
+- correctedText 是否为空；
+- correctedText 是否超过长度限制；
+- confidence 是否在 0～1；
+- changeTypes 是否在白名单；
+- 是否试图修改时间戳；
+- 是否返回未允许字段；
+- speaker role 是否有效；
+- section boundary 是否引用存在 Sentence；
+- Patch 数量是否异常；
+- 是否存在明显无依据扩写。
+
+### 8.2 写入规则
+
+```
+correctedText 与 rawText 实质相同
+→ agentNormalizedText = null
+correctedText 存在有效变化
+→ agentNormalizedText = correctedText
+未返回 Patch
+→ agentNormalizedText 不写入
+```
+
+Agent 不得修改：
+
+- rawText；
+- sourceSegmentIds；
+- startMs；
+- endMs。
+
+### 8.3 失败行为
+
+如果 LLM 输出校验失败：
+
+- 不保存部分错误数据；
+- rawText 保持不变；
+- 记录 validation errors；
+- 使用确定性 fallback；
+- 第一阶段不自动发起第二次完整付费请求；
+- 将必要内容标记为人工复核。
+
+## 9. deliveryFeatures
+
+### 9.1 设计目标
+
+教师可能删除：
+
+- 嗯；
+- 呃；
+- 重复；
+- 起句残片；
+- 自我修正过程。
+
+这些内容不应继续出现在最终可读文本中，但其课堂表达价值必须保留。
+
+因此 `deliveryFeatures` 从原始表达中提取，独立于教师编辑文本。
+
+### 9.2 数据结构
+
+```
+interface DeliveryFeatures {
+  fillerWords: Array<{
+    word: string;
+    count: number;
+  }>;
+
+  fillerWordCount: number;
+
+  repetitions: RepetitionSignal[];
+  repetitionCount: number;
+
+  selfCorrections: SelfCorrectionSignal[];
+  selfCorrectionCount: number;
+
+  incompleteUtterance: boolean;
+
+  possibleQuestion: boolean;
+  possibleInstruction: boolean;
+  possibleAnswer: boolean;
+  possibleFeedback: boolean;
+
   pauseBeforeMs?: number;
   pauseAfterMs?: number;
 
-  speechRateCharsPerMinute?: number;
+  speakerTurnChanged?: boolean;
 
-  fillerWords?: {
-    word: string;
-    count: number;
-  }[];
-
-  repetitions?: RepetitionSignal[];
-  selfCorrections?: SelfCorrectionSignal[];
-
-  incompleteUtterance?: boolean;
   interrupted?: boolean;
   overlap?: boolean;
 
   unclearAudio?: boolean;
   backgroundNoise?: boolean;
-
-  possibleQuestion?: boolean;
-  possibleInstruction?: boolean;
-  possibleAnswer?: boolean;
 }
 ```
 
-Transcript Agent 只识别语言和声学事实，不直接判断教学质量。
+### 9.3 重复信号
 
-例如可以输出：
+```
+interface RepetitionSignal {
+  text: string;
+  count: number;
 
-```text
-possibleQuestion = true
-pauseAfterMs = 4200
+  type:
+    | "hesitation"
+    | "emphasis"
+    | "instruction"
+    | "answer"
+    | "possible_asr_error";
+
+  startOffset?: number;
+  endOffset?: number;
+}
 ```
 
-但不应直接输出：
+确定性代码负责检测重复文本和位置。
 
-```text
-教师给予了充分等待时间。
+需要语义判断的重复类型，可以由 Agent Patch 标注。
+
+### 9.4 自我修正
+
+```
+interface SelfCorrectionSignal {
+  originalText: string;
+  correctedText: string;
+
+  startOffset?: number;
+  endOffset?: number;
+
+  confidence: number;
+}
 ```
 
-后者应由后续 Teaching Evidence Agent 根据上下文和评价标准判断。
+例如：
 
-------
+```
+这个角是六十度，不对，是九十度。
+```
 
-## 10. 事件数据
+不能只记录：
 
-部分信息不属于任何一句文本，应单独保存为时间轴事件。
+```
+selfCorrectionCount = 1
+```
 
-```ts
+还应保留修改前后的具体内容。
+
+### 9.5 特征来源
+
+仅依赖文本即可计算：
+
+- filler words；
+- 简单重复；
+- 部分自我修正；
+- incomplete utterance；
+- question flag；
+- 部分 instruction/answer 判断。
+
+依赖时间信息：
+
+- pause before；
+- pause after；
+- speaker turn；
+- silence duration。
+
+依赖音频或多模态：
+
+- 精确语速；
+- overlap；
+- 音频听不清；
+- 背景噪音；
+- 笑声；
+- 掌声；
+- 媒体播放。
+
+## 10. TranscriptEvent
+
+部分课堂信号不属于任何一个 Sentence，必须单独保存为时间轴事件。
+
+```
 interface TranscriptEvent {
   id: string;
+  lessonId: string;
+
   type: TranscriptEventType;
 
   startMs: number;
@@ -634,198 +802,502 @@ interface TranscriptEvent {
   relatedSentenceIds?: string[];
 
   confidence: number;
+
   metadata?: Record<string, unknown>;
 }
 ```
 
-建议支持以下事件类型：
+支持事件类型：
 
-```text
-SILENCE
-LONG_PAUSE
-OVERLAPPING_SPEECH
-INTERRUPTION
-BACKGROUND_NOISE
-LAUGHTER
-APPLAUSE
-GROUP_RESPONSE
-INAUDIBLE
-MEDIA_PLAYBACK
-OFF_TOPIC_AUDIO
 ```
-
-### 10.1 长时间等待
-
-长时间等待不能简单删除。
-
-建议区分：
-
-- `pauseBeforeMs`：一句话开始前的停顿；
-- `pauseAfterMs`：一句话结束后的停顿；
-- `SILENCE`：没有明确依附于某句话的静默事件。
-
-例如：
-
-```text
-教师：谁能解释一下为什么？ 00:10–00:13
-静默：00:13–00:19
-学生A：因为这两个角相等。 00:19–00:23
-```
-
-后续 Agent 可以据此识别：
-
-- 教师提问后的等待时间；
-- 学生回答前思考时间；
-- 无回应；
-- 活动切换；
-- 设备或课堂异常。
-
-但 Transcript Agent 不直接将静默解释为“有效等待”或“课堂冷场”。
-
-------
-
-## 11. 重复、自我修正与错漏表达
-
-### 11.1 重复
-
-需要区分：
-
-1. 无意识口吃或填充性重复；
-2. 教师为了强调而重复；
-3. 课堂管理指令重复；
-4. 学生回答内容重复；
-5. ASR 自身产生的假重复。
-
-前端可隐藏第一类无意义重复，但分析版必须保留类型、位置和次数。
-
-```ts
-interface RepetitionSignal {
-  text: string;
-  count: number;
-  type:
-    | "hesitation"
-    | "emphasis"
-    | "instruction"
-    | "answer"
-    | "possible_asr_error";
-}
-```
-
-### 11.2 自我修正
-
-例如：
-
-```text
-这个角是六十度，不对，是九十度。
-```
-
-前端不应只显示“这个角是九十度”，因为自我纠正可能具有教学分析价值。
-
-建议显示：
-
-```text
-这个角是六十度——不对，是九十度。
-```
-
-并记录：
-
-```ts
-interface SelfCorrectionSignal {
-  originalText: string;
-  correctedText: string;
-  startOffset?: number;
-  endOffset?: number;
-}
-```
-
-### 11.3 错漏表达
-
-Transcript Agent 只能修复高置信度的 ASR 错误。
-
-以下情况必须保留原表达或标记为不确定：
-
-- 学生回答事实错误；
-- 教师口误后未明确修正；
-- 句子语法不完整但原音频确实如此；
-- 专有名词无法确定；
-- 数学符号存在多个可能解释；
-- 音频听不清。
-
-不得为了让文本“看起来正确”而改变课堂事实。
-
-------
-
-## 12. Transcript Flag
-
-建议至少支持：
-
-```ts
-type TranscriptFlag =
-  | "LOW_TRANSCRIPTION_CONFIDENCE"
-  | "LOW_SPEAKER_CONFIDENCE"
-  | "TIMING_ESTIMATED"
-  | "FILLER_PRESENT"
-  | "FILLER_REMOVED_FROM_DISPLAY"
-  | "REPETITION"
-  | "SELF_CORRECTION"
-  | "INCOMPLETE_UTTERANCE"
-  | "LONG_PAUSE_BEFORE"
-  | "LONG_PAUSE_AFTER"
-  | "INTERRUPTED"
+type TranscriptEventType =
+  | "SILENCE"
+  | "LONG_PAUSE"
   | "OVERLAPPING_SPEECH"
+  | "INTERRUPTION"
+  | "BACKGROUND_NOISE"
+  | "LAUGHTER"
+  | "APPLAUSE"
   | "GROUP_RESPONSE"
   | "INAUDIBLE"
-  | "BACKGROUND_NOISE"
-  | "POSSIBLE_ASR_ERROR"
-  | "MANUALLY_EDITED";
+  | "MEDIA_PLAYBACK"
+  | "OFF_TOPIC_AUDIO";
 ```
 
-Flag 应用于检索和快速筛选，详细信息放在 `signals` 中。
+### 10.1 静默与等待
 
-------
+例如：
 
-## 13. 人工编辑与版本控制
+```
+教师提问：00:10–00:13
+静默：00:13–00:19
+学生回答：00:19–00:23
+```
 
-逐字稿必须支持人工校正，因为：
+应保存：
 
-- ASR 可能识别错误；
-- 说话人分离可能错误；
-- 专有名词可能需要教师修正；
-- 后续分析的可信度取决于逐字稿质量。
+```
+Sentence：教师问题
+Event：SILENCE，6 秒
+Sentence：学生回答
+```
 
-```ts
-interface TranscriptRevision {
-  revisionId: string;
-  editedAt: string;
-  editedBy: string;
+Transcript Agent 只记录事实。
 
-  changedFields: string[];
-  previousValues: Record<string, unknown>;
+它不直接判断：
+
+```
+教师等待充分
+```
+
+或：
+
+```
+课堂出现冷场
+```
+
+这类评价交给后续 Teaching Evidence Agent。
+
+## 11. 教师编辑
+
+### 11.1 文本编辑
+
+教师编辑只写：
+
+```
+teacherEditedText
+```
+
+不得覆盖：
+
+```
+rawText
+agentNormalizedText
+```
+
+教师未修改时：
+
+```
+teacherEditedText = null
+```
+
+### 11.2 教师编辑与 deliveryFeatures
+
+教师将：
+
+```
+嗯，这个这个二氧化碳呢……
+```
+
+修改为：
+
+```
+二氧化碳……
+```
+
+只改变有效语义文本。
+
+以下信息继续保留：
+
+```
+{
+  "fillerWordCount": 2,
+  "repetitionCount": 1
+}
+```
+
+### 11.3 整句删除
+
+整句删除必须区分：
+
+- 仅从展示中隐藏；
+- ASR 噪音，不参与语义分析；
+- 非课堂内容；
+- 隐私内容；
+- 不参与任何分析。
+
+推荐字段：
+
+```
+interface TranscriptInclusionPolicy {
+  includeInDisplay: boolean;
+  includeInSemanticAnalysis: boolean;
+  includeInDeliveryAnalysis: boolean;
+
   reason?: string;
 }
 ```
 
-人工编辑原则：
+### 11.4 教师确认
 
-- 修改展示文本时，不能直接覆盖原始 ASR；
-- 修改说话人后，应同步更新分析版；
-- 合并或拆分句子时，应保留旧句子 ID 的映射关系；
-- 后续分析结果应记录基于哪个 Transcript 版本生成；
-- 逐字稿发生重要修改后，相关分析应被标记为需要重新运行。
+教师即使未修改文本，也可以确认：
 
-------
+```
+reviewStatus = teacher_confirmed
+```
 
-## 14. 质量评估
+推荐状态：
 
-Transcript Agent 应输出整体质量信息。
+```
+type TranscriptReviewStatus =
+  | "unreviewed"
+  | "agent_processed"
+  | "teacher_edited"
+  | "teacher_confirmed"
+  | "requires_review";
+```
 
-```ts
+## 12. Version Control
+
+### 12.1 为什么必须有版本
+
+教师修改逐字稿后，旧的：
+
+- 指标；
+- 事件判断；
+- 教学证据；
+- 报告；
+
+可能已经失效。
+
+系统必须知道分析是基于哪个 Transcript 版本生成。
+
+### 12.2 版本字段
+
+```
+interface TranscriptVersion {
+  lessonId: string;
+
+  version: number;
+
+  updatedAt: string;
+  updatedBy: string;
+
+  changeType:
+    | "agent"
+    | "teacher"
+    | "system";
+
+  requiresReanalysis: boolean;
+}
+```
+
+分析结果应保存：
+
+```
+analysisBasedOnTranscriptVersion
+```
+
+### 12.3 失效规则
+
+教师修改以下内容时，应标记相关分析 stale：
+
+- 术语；
+- 事实内容；
+- speaker role；
+- speaker identity；
+- Sentence 合并或拆分；
+- Section 调整；
+- 是否参与分析。
+
+不应自动重跑整堂课所有步骤。
+
+应根据受影响 Sentence、Section 和 Evidence 做局部失效。
+
+## 13. Section Builder
+
+### 13.1 职责
+
+Section Builder 将 Sentence 组织为教师前端使用的语义段落。
+
+它不生成第二份逐字稿，只保存：
+
+- Section 边界；
+- 标题；
+- Sentence ID 引用；
+- 时间范围。
+
+### 13.2 Section 数据结构
+
+```
+interface TranscriptSection {
+  id: string;
+  lessonId: string;
+
+  order: number;
+
+  startMs: number;
+  endMs: number;
+
+  title: string;
+
+  sentenceIds: string[];
+
+  characterCount: number;
+
+  confidence?: number;
+}
+```
+
+### 13.3 切段原则
+
+优先按：
+
+- 主题变化；
+- 教学活动变化；
+- 讲解转提问；
+- 提问转学生回答；
+- 学生回答转教师反馈；
+- 练习开始或结束；
+- 活动转换；
+- 长静默；
+- 课堂管理事件；
+- 场景变化。
+
+长度要求：
+
+- 推荐 150～350 个中文字符；
+- 最大 500 个中文字符；
+- 不得切断 Sentence；
+- 很短但语义完整的 Section 可以低于 150 字。
+
+### 13.4 问答段落
+
+连续问答可以放在一个 Section 中：
+
+```
+教师：为什么这个角是九十度？
+
+学生 A：因为两条直线互相垂直。
+
+教师：对。那我们可以使用哪一个定理？
+```
+
+但每句话必须继续保留自己的：
+
+- Sentence ID；
+- 时间轴；
+- speaker；
+- effective text。
+
+### 13.5 Section 标题
+
+每个 Section 必须有可理解标题。
+
+优先格式：
+
+```
+教学活动：核心内容
+```
+
+例如：
+
+- 导入与复习：分数的意义
+- 问题探究：哪两个角相等
+- 推理说明：角平分线依据
+- 练习讲评：判断分数单位
+- 总结与作业：今日内容回顾
+
+标题要求：
+
+- 建议 6～18 个中文字符；
+- 来自实际课堂内容；
+- 不得臆造教材章节；
+- 不得使用占位标题。
+
+禁止：
+
+```
+课堂片段 1
+第 3 段
+教学内容
+片段
+```
+
+Section Boundary 可以由 Agent 提供建议，但最终 Section 组装和长度校验由确定性代码执行。
+
+## 14. 前端展示投影
+
+前端展示不是一份独立持久化逐字稿。
+
+它由 Section、Sentence、effective text 和 effective speaker 动态生成。
+
+```
+interface DisplayTranscriptSentence {
+  id: string;
+
+  startMs: number;
+  endMs: number;
+
+  speakerLabel: string;
+
+  text: string;
+
+  confidenceLevel?: "high" | "medium" | "low";
+
+  editable: boolean;
+}
+```
+
+前端应支持：
+
+- 点击句子跳转视频；
+- 视频播放时高亮当前句；
+- 按句编辑；
+- 修改说话人；
+- 查看原始 ASR；
+- 查看 Agent 修改；
+- 合并或拆分 Sentence；
+- 显示低置信度；
+- 查看必要的停顿、重复、重叠和听不清标记。
+
+普通阅读模式不默认展示：
+
+- filler count；
+- ASR speaker ID；
+- 完整分析标签；
+- 噪音细节；
+- 所有 raw text。
+
+校对模式可以查看。
+
+## 15. Downstream Analysis Input Builder
+
+### 15.1 输入原则
+
+下游 Agent 不接收：
+
+```
+完整 raw transcript
++
+完整 Agent transcript
++
+完整 teacher transcript
+```
+
+而接收紧凑结构：
+
+```
+interface AnalysisSentenceInput {
+  id: string;
+
+  startMs: number;
+  endMs: number;
+
+  speakerRole: SpeakerRole;
+  speakerIdentityId?: string | null;
+  speakerLabel: string;
+
+  semanticText: string;
+
+  deliveryFeatures?: CompactDeliveryFeatures;
+
+  reviewStatus?: TranscriptReviewStatus;
+
+  rawExcerpt?: string;
+}
+```
+
+### 15.2 Compact Delivery Features
+
+下游只接收任务需要的特征：
+
+```
+interface CompactDeliveryFeatures {
+  fillerWordCount?: number;
+  repetitionCount?: number;
+  selfCorrectionCount?: number;
+
+  pauseBeforeMs?: number;
+  pauseAfterMs?: number;
+
+  incompleteUtterance?: boolean;
+
+  possibleQuestion?: boolean;
+  possibleInstruction?: boolean;
+  possibleAnswer?: boolean;
+}
+```
+
+详细信息继续保存在数据库。
+
+### 15.3 Raw Excerpt
+
+仅在以下情况下附带原文：
+
+- needsHumanReview；
+- 术语修正置信度低；
+- 教师修改与原文差异较大；
+- 证据引用需要原话；
+- 表达判断依赖原始措辞；
+- 修正存在冲突；
+- 重复或自我修正需要核查；
+- 听不清或多种解释。
+
+必须限制：
+
+- 每次最大 excerpt 数量；
+- 单条最大字符数；
+- 总 excerpt 字符数；
+- 仅发送相关 Sentence。
+
+## 16. 后续模块使用规范
+
+### 16.1 Metrics
+
+确定性统计使用：
+
+- effective speaker；
+- Sentence 时间；
+- TranscriptEvent；
+- deliveryFeatures；
+- Section。
+
+不应让 LLM 自己统计：
+
+- 教师发言时长；
+- 学生发言次数；
+- 停顿次数；
+- 问题数量；
+- 重复数量。
+
+### 16.2 Teaching Evidence Agent
+
+使用：
+
+- Sentence ID；
+- semanticText；
+- effective speaker；
+- 问答轮次；
+- deliveryFeatures；
+- TranscriptEvent；
+- review status；
+- confidence。
+
+输出证据必须引用：
+
+- Sentence ID；
+- 时间范围；
+- 必要时 raw excerpt。
+
+### 16.3 Report Agent
+
+主要使用已经确认的 Evidence。
+
+不应重新读取整份逐字稿并重新判断所有课堂事实。
+
+## 17. Transcript Quality
+
+### 17.1 Lesson 级质量
+
+```
 interface TranscriptQuality {
   overallScore: number;
 
   lowConfidenceSentenceRatio: number;
   unknownSpeakerRatio: number;
   estimatedTimingRatio: number;
+
   inaudibleDurationMs: number;
   overlapDurationMs: number;
 
@@ -834,337 +1306,325 @@ interface TranscriptQuality {
 }
 ```
 
-建议触发人工校对的情况：
+### 17.2 人工复核触发条件
 
-- 大量句子识别置信度低；
-- 教师身份无法可靠确定；
-- Unknown 说话人占比过高；
+包括：
+
+- 低置信度 Sentence 比例过高；
+- 教师身份无法判断；
+- Unknown speaker 比例过高；
+- 专业术语错误较多；
 - 大量音频听不清；
-- 时间轴只能粗略估计；
-- 多人重叠讲话比例过高；
-- 数学、科学等专业术语错误较多。
+- 时间轴主要依赖估算；
+- 多人重叠比例过高；
+- Patch 校验失败；
+- 数字、公式或专名存在冲突。
 
-------
+## 18. 数据库建议
 
-## 15. Agent 处理流程
+### 18.1 Transcript Sentence
 
-### 步骤一：输入校验
+至少包含：
+
+```
+id
+lesson_id
+order
+start_ms
+end_ms
+timing_precision
+source_segment_ids
+
+raw_text
+agent_normalized_text
+teacher_edited_text
+
+raw_speaker_ids
+agent_speaker_role
+agent_speaker_identity_id
+teacher_speaker_role
+teacher_speaker_identity_id
+
+transcription_confidence
+speaker_confidence
+agent_confidence
+agent_change_types
+
+delivery_features
+needs_human_review
+review_reason
+review_status
+
+version
+created_at
+updated_at
+```
+
+### 18.2 Canonical Speaker Registry
+
+单独表保存：
+
+```
+speaker_id
+lesson_id
+role
+display_label
+raw_speaker_ids
+confidence
+source
+version
+```
+
+### 18.3 Transcript Event
+
+单独表保存时间轴事件。
+
+### 18.4 Transcript Section
+
+保存：
+
+- Section ID；
+- 标题；
+- 顺序；
+- 时间范围；
+- Sentence IDs；
+- 字符数量。
+
+不保存第二份完整段落文本。
+
+### 18.5 Transcript Version
+
+Lesson 级保存 Transcript 当前版本及是否需要重新分析。
+
+## 19. Agent 处理流程
+
+### 步骤 1：输入校验
 
 检查：
 
 - 时间轴是否合法；
-- ASR 片段是否重叠；
-- speaker ID 是否存在；
-- 是否有缺失音频区间；
-- 文本是否为空；
-- 词级时间轴是否可用。
+- Segment 是否缺失；
+- 是否有空文本；
+- 是否存在异常重叠；
+- speaker ID 是否可用；
+- 词级时间是否可用；
+- ASR 数据是否完整。
 
-### 步骤二：ASR 片段标准化
+### 步骤 2：Sentence Reconstruction
 
-完成：
+根据：
 
-- 标点恢复；
-- 片段拼接；
-- 明显错别字修复；
-- 数字和单位规范化；
-- 原始 speaker 信息保留。
+- 文本语义；
+- 标点；
+- 停顿；
+- speaker 变化；
+- ASR Segment 边界；
 
-### 步骤三：句子重建
+构建 Transcript Sentence。
 
-根据语义、标点、停顿和说话人变化形成句子，并为每句话计算时间轴。
+### 步骤 3：Speaker Registry
 
-### 步骤四：说话人角色推断
+建立：
 
-结合：
+- raw speaker；
+- canonical role；
+- lesson 内稳定 identity；
+- display label。
 
-- ASR speaker；
-- 全课语言行为；
-- 说话比例；
-- 问答关系；
-- 指令和反馈模式；
-- 可用的声纹或视频信息。
+### 步骤 4：确定性特征提取
 
-输出 Teacher、Student A/B/C、Students 或 Unknown。
+提取：
 
-### 步骤五：分析信号提取
+- filler；
+- 重复位置；
+- 停顿；
+- Sentence 顺序；
+- 说话轮次；
+- 基础问句标记；
+- 时间轴事件。
 
-识别：
+### 步骤 5：Agent Patch
 
-- 长停顿；
-- 填充词；
-- 重复；
-- 自我修正；
-- 打断；
-- 重叠讲话；
-- 不完整句；
-- 低置信度；
-- 音频异常。
+LLM 只输出：
 
-### 步骤六：生成展示文本
+- 必要文本修改；
+- speaker 修正；
+- 语义类型标注；
+- 人工复核；
+- Section boundary 建议。
 
-在不改变事实的情况下生成 `displayText`。
+### 步骤 6：Patch 校验与合并
 
-### 步骤七：语义分段
+校验成功后写入：
 
-将句子组织为前端展示段落：
+- agentNormalizedText；
+- agent speaker；
+- confidence；
+- change types；
+- review flags。
 
-- 按教学内容和互动结构切分；
-- 推荐150～350字；
-- 最大500字；
-- 不切断句子；
-- 保留每句话自己的时间轴。
+### 步骤 7：Section Builder
 
-### 步骤八：质量检查
+确定性构建 Section，确保：
 
-验证：
+- 按语义和活动切段；
+- 每段不超过 500 字；
+- 不切断 Sentence；
+- 有可理解标题。
 
-- 是否存在无时间轴句子；
-- 是否有超过500字的展示段；
-- 是否存在未映射的源片段；
-- 文本是否出现事实性改写；
-- 句子顺序和时间顺序是否一致；
-- 每个分析信号是否能追溯到句子或事件。
+### 步骤 8：教师复核
 
-------
+教师可：
 
-## 16. 后续 Agent 使用规范
+- 修改文本；
+- 修改 speaker；
+- 合并或拆分 Sentence；
+- 调整 Section；
+- 确认内容；
+- 排除噪音或非课堂内容。
 
-### Section Builder
+### 步骤 9：版本更新
 
-使用：
+重要修改后：
 
-- normalizedText；
-- 句子时间轴；
-- 说话人角色；
-- 静默和活动转换事件。
+- Transcript version +1；
+- 标记相关分析 stale；
+- 记录影响范围。
 
-不得直接使用未经处理的 ASR。
+### 步骤 10：下游输入构建
 
-### Teaching Evidence Agent
+根据任务动态生成：
 
-使用：
+- semanticText；
+- compact deliveryFeatures；
+- effective speaker；
+- selected raw excerpts。
 
-- 句子 ID；
-- normalizedText；
-- 说话人；
-- 问答轮次；
-- 等待时间；
-- 重复追问；
-- 自我修正；
-- 置信度。
+## 20. 测试与验收
 
-输出证据时必须关联原句 ID 和时间范围。
+### 20.1 文本安全
 
-### Report Agent
+必须满足：
 
-主要使用已经确认的 Evidence，不应重新解释所有逐字稿。
+- rawText 不被覆盖；
+- Sentence 不无故丢失；
+- 时间轴不被 LLM 修改；
+- 学生错误答案不被修正确；
+- 不确定术语不被强行猜测；
+- Agent 不扩写课堂内容。
 
-需要引用课堂原话时，引用 Transcript Sentence。
+### 20.2 Patch 验收
 
-### 统计分析
+- 未知 ID 为 0；
+- 重复 ID 为 0；
+- 时间戳修改为 0；
+- 关键事实错误为 0；
+- 输出 schema 通过率达到要求；
+- 未修改 Sentence 不重复返回；
+- 输出 token 显著低于完整稿方案。
 
-可以使用：
+### 20.3 Speaker 验收
 
-- 教师与学生讲话时长；
-- 问题数量；
-- 回答数量；
-- 等待时间分布；
-- 单个学生参与情况；
-- 打断和重叠情况；
-- 课堂活动转换频率。
+- 教师角色识别准确；
+- Student A/B/C 在同一节课内稳定；
+- 同一 raw speaker 不频繁切换身份；
+- 群体发言可识别为 Students；
+- 多人重叠不强行分配单人；
+- 不确定时输出 Unknown；
+- 教师修改后全局映射一致。
 
-统计时必须考虑说话人和文本置信度。
+### 20.4 Sentence 验收
 
-------
+- 每句有唯一 ID；
+- 每句有开始和结束时间；
+- 每句可回溯 source Segment；
+- 句子不因字数机械切断；
+- 短回答不会丢失；
+- 合并和拆分可追溯。
 
-## 17. API 返回建议
+### 20.5 Section 验收
 
-不建议默认一次返回完整分析版，因为分析版字段较多。
+- 每个 Section 不超过 500 个中文字符；
+- 每个 Section 由完整 Sentence 组成；
+- Section 按教学主题或活动切分；
+- 问答关系不被拆散；
+- 标题不是占位文本；
+- 每个 Section 可定位到时间轴。
 
-### 获取前端逐字稿
+### 20.6 deliveryFeatures 验收
 
-```http
-GET /lessons/{lessonId}/transcript/display
+教师删除语气词、重复后：
+
+- filler 数据仍存在；
+- repetition 数据仍存在；
+- self-correction 数据仍存在；
+- 原始时间和事件仍可追溯。
+
+### 20.7 Version 验收
+
+教师重要修改后：
+
+- Transcript version 更新；
+- 旧 Evidence 或 Report 可识别为 stale；
+- 下游不会继续把旧分析当作最新结果。
+
+## 21. 最终验收标准
+
+系统最终必须满足：
+
+1. 所有可识别语言均保留 rawText；
+2. rawText 永不被 Agent 或教师覆盖；
+3. Agent 只返回 Patch，不返回完整逐字稿；
+4. 每个 Sentence 有稳定 ID 和时间轴；
+5. 每个 Sentence 可追溯至原始 ASR Segment；
+6. 教师、Student A/B/C、Students、Multiple 和 Unknown 可区分；
+7. 同一学生在单节课内身份稳定；
+8. 教师修改优先用于语义分析；
+9. 教师清理文本不会销毁原始表达信号；
+10. 停顿、重叠和噪音可通过 TranscriptEvent 保存；
+11. 学生错误回答不会被 Agent 自动纠正；
+12. Section 按语义和课堂活动切分；
+13. 单个 Section 不超过 500 个中文字符；
+14. 每个 Section 有实际意义标题；
+15. 下游 Agent 不接收多份完整逐字稿；
+16. Evidence 可引用 Sentence ID 和时间范围；
+17. 人工修改会更新 Transcript version；
+18. 旧分析结果可被标记为 stale；
+19. 低质量内容会触发人工复核；
+20. 所有分析结论可回到原始音频和原始文本。
+
+## 22. 最终架构结论
+
+系统最终维护的不是多套逐字稿，而是一套 Segment/Sentence 级事实数据：
+
+```
+rawText
+agentNormalizedText
+teacherEditedText
+speaker mapping
+deliveryFeatures
+TranscriptEvent
+TranscriptVersion
 ```
 
-返回：
+在此基础上动态生成：
 
-- 语义段；
-- 展示句子；
-- 时间轴；
-- 前端必要的置信度；
-- 当前版本号。
-
-### 获取句子详情
-
-```http
-GET /lessons/{lessonId}/transcript/sentences/{sentenceId}
+```
+教师展示投影
+Section 时间轴
+下游分析输入
+Evidence 原文引用
 ```
 
-返回：
+整体原则为：
 
-- rawText；
-- normalizedText；
-- displayText；
-- flags；
-- 信号；
-- 说话人映射；
-- 修订记录。
-
-### 获取分析版
-
-```http
-GET /internal/lessons/{lessonId}/transcript/analysis
+```
+原始事实不覆盖
+Agent 修改可追踪
+教师修改优先
+行为信号不丢失
+下游输入不重复
+分析版本可校验
 ```
 
-主要供后续 Agent 和内部任务使用，不一定直接开放给浏览器。
-
-### 修改句子
-
-```http
-PATCH /lessons/{lessonId}/transcript/sentences/{sentenceId}
-```
-
-允许修改：
-
-- displayText；
-- normalizedText；
-- speakerId；
-- 句子边界；
-- 人工确认状态。
-
-------
-
-## 18. 示例
-
-### 原始 ASR
-
-```json
-[
-  {
-    "startMs": 10000,
-    "endMs": 13700,
-    "speakerId": "speaker_1",
-    "text": "嗯那个谁能告诉我这个角为什么是九十度"
-  },
-  {
-    "startMs": 18800,
-    "endMs": 21400,
-    "speakerId": "speaker_3",
-    "text": "因为因为这两条直线垂直"
-  },
-  {
-    "startMs": 21500,
-    "endMs": 24100,
-    "speakerId": "speaker_1",
-    "text": "对所以垂直的两条直线形成直角"
-  }
-]
-```
-
-### 标准化句子
-
-```json
-[
-  {
-    "id": "sentence_001",
-    "startMs": 10000,
-    "endMs": 13700,
-    "speakerRole": "teacher",
-    "rawText": "嗯那个谁能告诉我这个角为什么是九十度",
-    "normalizedText": "嗯，那个，谁能告诉我这个角为什么是九十度？",
-    "displayText": "谁能告诉我这个角为什么是九十度？",
-    "flags": ["FILLER_PRESENT", "FILLER_REMOVED_FROM_DISPLAY"],
-    "signals": {
-      "pauseAfterMs": 5100,
-      "fillerWords": [
-        {"word": "嗯", "count": 1},
-        {"word": "那个", "count": 1}
-      ],
-      "possibleQuestion": true
-    }
-  },
-  {
-    "id": "sentence_002",
-    "startMs": 18800,
-    "endMs": 21400,
-    "speakerRole": "student",
-    "rawText": "因为因为这两条直线垂直",
-    "normalizedText": "因为、因为这两条直线垂直。",
-    "displayText": "因为这两条直线垂直。",
-    "flags": ["REPETITION"],
-    "signals": {
-      "repetitions": [
-        {
-          "text": "因为",
-          "count": 2,
-          "type": "hesitation"
-        }
-      ],
-      "possibleAnswer": true
-    }
-  }
-]
-```
-
-### 前端展示
-
-```text
-00:10  教师
-谁能告诉我这个角为什么是九十度？
-
-00:18  学生A
-因为这两条直线垂直。
-
-00:21  教师
-对，所以垂直的两条直线形成直角。
-```
-
-### 后续分析可读取的信息
-
-- 教师提出问题；
-- 提问后等待5.1秒；
-- Student A 回答；
-- 学生存在轻微起句重复；
-- 教师确认答案并解释；
-- 每项结论都能对应具体句子和视频时间。
-
-------
-
-## 19. 最终验收标准
-
-Transcript Agent 的结果必须满足：
-
-1. 所有可识别语言均有原始文本记录；
-2. 每句话都有唯一 ID；
-3. 每句话都有开始和结束时间；
-4. 每句话有标准化说话人及其置信度；
-5. 教师和学生身份不会只依赖 ASR speaker 标签；
-6. 前端展示段按语义切分；
-7. 单个前端展示段不超过500个中文字符；
-8. 每个展示段由完整句子组成；
-9. 前端清洗不会销毁停顿、重复和修正信息；
-10. 长静默、重叠和听不清内容可独立记录；
-11. 学生错误回答不会被自动纠正；
-12. 人工修改有版本记录；
-13. 后续 Agent 能通过句子 ID 引用证据；
-14. 所有分析结果可以回到原始音频；
-15. 低质量或高不确定性内容会被明确标记。
-
-------
-
-## 20. 最终架构结论
-
-逐字稿不应真正维护两套独立文本，而应维护：
-
-```text
-一份标准化底层逐字稿
-    ├─ 展示投影：简洁、分段、可编辑、句级时间轴
-    └─ 分析投影：完整、结构化、保留隐藏信号
-```
-
-前端展示版解决“教师如何方便阅读和校对”。
-
-后续分析版解决“AI 如何准确理解课堂事实”。
-
-二者共享句子 ID、时间轴、说话人和版本号，确保整个课堂分析 Pipeline 始终基于同一份可追溯事实。
+Transcript Agent 的核心价值不是生成一份看起来流畅的稿件，而是把课堂语音转换为一套可靠、可编辑、可引用、可分析的课堂事实数据。

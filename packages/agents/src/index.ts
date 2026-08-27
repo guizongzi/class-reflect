@@ -8,7 +8,7 @@ export type {
   TranscriptNormalizerOutput
 } from "./types";
 
-export { runTranscriptNormalizer } from "./transcript-normalizer-agent";
+export { buildDisplayTranscriptSections, runTranscriptNormalizer } from "./transcript-normalizer-agent";
 export { runTeachingEvidenceAgent } from "./teaching-evidence-agent";
 export { runWorkflowAgent, AgentOrchestrator } from "./workflow-agent";
 export { callAgent, callAgentTool, createAgentRequestId, createAgentTraceId } from "./ai";

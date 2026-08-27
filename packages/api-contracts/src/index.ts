@@ -47,6 +47,15 @@ export const UpdateLessonSectionRequestSchema = z.object({
 
 export type UpdateLessonSectionRequest = z.infer<typeof UpdateLessonSectionRequestSchema>;
 
+export const UpdateTranscriptSegmentRequestSchema = z.object({
+  editedSummaryText: z.string().min(1),
+  speakerRole: z.enum(["teacher", "student", "students", "multiple", "unknown"]).optional(),
+  speakerIdentityId: z.string().min(1).max(64).optional(),
+  reviewerId: z.string().optional()
+});
+
+export type UpdateTranscriptSegmentRequest = z.infer<typeof UpdateTranscriptSegmentRequestSchema>;
+
 export const UpdateReportRequestSchema = z.object({
   markdownContent: z.string().min(1)
 });

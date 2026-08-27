@@ -1,6 +1,5 @@
 import { capabilityMatrixByLessonFormat, type TeachingEvidenceCard } from "@class-reflect/shared-types";
 import { tryRunLlmAgent } from "../llm";
-import { teachingEvidenceOutputInstruction } from "./prompt";
 import type { AgentResult, TeachingEvidenceInput, TeachingEvidenceOutput } from "../types";
 import { isTeachingEvidenceOutput } from "./validator";
 import {
@@ -10,6 +9,7 @@ import {
   buildTeacherSelfAnswerCard,
   buildTechnicalIssueCard
 } from "./cards";
+import { buildTeachingEvidenceLlmPayload } from "./compact-input";
 import { defaultEvidenceCategories } from "./constants";
 import { inferInstructionalContext, isCategorySupported, meetsMinimumConfidence } from "./helpers";
 
@@ -20,26 +20,7 @@ export async function runTeachingEvidenceAgent(
     agentName: "teaching-evidence-agent",
     promptVersion: "teaching-evidence.llm.v1",
     traceId: input.traceId,
-    payload: {
-      instruction: teachingEvidenceOutputInstruction,
-
-      lessonId: input.lessonId,
-      lesson_format: input.lesson_format,
-      lessonFormat: input.lesson_format,
-
-      capabilityMatrix:
-        input.capabilityMatrix ||
-        capabilityMatrixByLessonFormat[input.lesson_format],
-
-      transcriptSegments: input.transcriptSegments,
-      metrics: input.metrics,
-      classroomEvents: input.classroomEvents || [],
-
-      generationConfig:
-        input.generationConfig || {
-          language: "zh-CN"
-        }
-    },
+    payload: buildTeachingEvidenceLlmPayload(input),
     validate: isTeachingEvidenceOutput
   });
 

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import type { UpdateLessonSectionRequest } from "@class-reflect/api-contracts";
+import type { UpdateLessonSectionRequest, UpdateTranscriptSegmentRequest } from "@class-reflect/api-contracts";
 import { updateLessonSectionText, updateTranscriptSegmentText } from "@class-reflect/database";
 
 @Injectable()
@@ -15,11 +15,13 @@ export class TranscriptsService {
     return { ok: true, section };
   }
 
-  async updateSegment(lessonId: string, segmentId: string, input: UpdateLessonSectionRequest) {
+  async updateSegment(lessonId: string, segmentId: string, input: UpdateTranscriptSegmentRequest) {
     const segment = await updateTranscriptSegmentText({
       lessonId,
       segmentId,
       editedText: input.editedSummaryText,
+      speakerRole: input.speakerRole,
+      speakerIdentityId: input.speakerIdentityId,
       reviewerId: input.reviewerId
     });
     if (!segment) throw new NotFoundException("segment not found");

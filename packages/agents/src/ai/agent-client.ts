@@ -12,6 +12,7 @@ export async function callAgent<T>(input: {
   promptVersion: string;
   input: unknown;
   traceId?: string;
+  systemInstruction?: string;
   validate: (value: unknown) => value is T;
 }): Promise<{ output: T; rawOutput: string; parsedOutput: unknown; validationResult: AgentValidationResult }> {
   const config = readAgentLlmConfig();
@@ -43,9 +44,10 @@ export async function callAgent<T>(input: {
       body: JSON.stringify({
         model: config.model,
         temperature: 0.2,
+        ...(process.env.LLM_DISABLE_THINKING === "false" ? {} : { enable_thinking: false }),
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: `promptVersion=${input.promptVersion}\n输出严格 JSON，不要 Markdown。` },
+          { role: "system", content: buildSystemPrompt(input.promptVersion, input.systemInstruction) },
           { role: "user", content: JSON.stringify(input.input) }
         ]
       })
@@ -95,6 +97,10 @@ export async function callAgent<T>(input: {
     });
     throw error;
   }
+}
+
+function buildSystemPrompt(promptVersion: string, systemInstruction?: string) {
+  return `promptVersion=${promptVersion}\n${systemInstruction || "输出严格 JSON，不要 Markdown。"}`;
 }
 
 export async function callAgentTool<T>(input: {

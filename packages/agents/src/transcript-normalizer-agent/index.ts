@@ -1,4 +1,5 @@
 export { runTranscriptNormalizer } from "./run";
+export { buildDisplayTranscriptSections } from "./sections";
 
 import type { AgentResult, TranscriptNormalizerOutput } from "../types";
 import type { TranscriptSegment } from "@class-reflect/shared-types";

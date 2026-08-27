@@ -678,7 +678,7 @@ a {
   align-items: start;
   display: grid;
   gap: 8px;
-  grid-template-columns: 54px 56px minmax(0, 1fr) auto;
+  grid-template-columns: 54px 56px 92px minmax(0, 1fr) auto;
 }
 
 .sentence-time {
@@ -699,6 +699,16 @@ a {
   line-height: 1;
   padding: 8px 9px;
   text-align: center;
+}
+
+.speaker-select {
+  border: 1px solid #dfe4dc;
+  border-radius: 6px;
+  color: #305a43;
+  font: inherit;
+  font-size: 12px;
+  min-height: 30px;
+  padding: 5px 6px;
 }
 
 .transcript-sentence textarea {
@@ -1093,6 +1103,7 @@ a {
   }
 
   .transcript-sentence textarea,
+  .transcript-sentence .speaker-select,
   .transcript-sentence .compact-button {
     grid-column: 1 / -1;
   }

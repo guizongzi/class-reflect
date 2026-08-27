@@ -1,4 +1,4 @@
-import { runTeachingEvidenceAgent, runTranscriptNormalizer } from "@class-reflect/agents";
+import { buildDisplayTranscriptSections, runTeachingEvidenceAgent, runTranscriptNormalizer } from "@class-reflect/agents";
 import {
   getTeachingEvidenceSource,
   getLessonRecord,
@@ -51,11 +51,10 @@ export const buildSectionsProcessor: WorkflowProcessor = {
     });
     if (!transcriptSegments.length) throw new Error("还没有可用于生成展示逐字稿的句子");
 
-    const result = await runTranscriptNormalizer(transcriptSegments, { traceId: context.traceId });
     const savedSections = await saveLessonSections({
       lessonId: context.workflow.lessonId,
       videoId: context.workflow.videoId,
-      sections: result.output.displaySections
+      sections: buildDisplayTranscriptSections(transcriptSegments)
     });
     return {
       output: {
@@ -64,8 +63,7 @@ export const buildSectionsProcessor: WorkflowProcessor = {
         firstSectionId: savedSections[0]?.id || null,
         lastSectionId: savedSections[savedSections.length - 1]?.id || null,
         mode: "display_projection"
-      },
-      warnings: result.warnings
+      }
     };
   }
 };
