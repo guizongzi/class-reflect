@@ -113,14 +113,9 @@ export function buildReportFromAcceptedEvidence(input: {
       `- 时间：${msToClock(card.startMs)}-${msToClock(card.endMs)}`,
       `- 事实：${card.fact}`,
       `- 判断：${card.interpretation}`,
-      `- 建议：${card.suggestion}`,
       `- 引用：${card.quote}`
     ].join("\n")).join("\n\n")
     : "本报告尚无已确认的教学证据。请先在证据审核中接受或修改后接受候选证据。";
-
-  const suggestions = accepted.length
-    ? accepted.map((card) => `- ${card.suggestion}`).join("\n")
-    : "- 暂无已确认建议。";
 
   return {
     lessonId: input.lesson.id,
@@ -155,11 +150,7 @@ export function buildReportFromAcceptedEvidence(input: {
       "",
       findings,
       "",
-      "## 7. 下一次课堂可尝试的改进",
-      "",
-      suggestions,
-      "",
-      "## 8. 分析限制与不确定性",
+      "## 7. 分析限制与不确定性",
       "",
       "报告不评价教师人格、能力或学生真实掌握程度；没有音视频和逐字稿证据支持的内容不进入报告。"
     ].join("\n"),

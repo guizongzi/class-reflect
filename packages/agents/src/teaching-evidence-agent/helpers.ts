@@ -87,7 +87,7 @@ export function inferInstructionalContext(segments: TranscriptSegment[]): Instru
 }
 
 export function inferResponsePattern(segment: TranscriptSegment, lessonFormat: LessonFormat): ResponsePattern {
-  if (lessonFormat === "recorded_online_class") return "teacher_self_answer";
+  if (lessonFormat === "recorded_online_class" || isTeacherCertificationInterview(lessonFormat)) return "teacher_self_answer";
   const label = segment.speakerLabel || "";
   if (/全班|学生们|集体|齐答/.test(label + segment.text)) return "choral_response";
   if (/学生|生|同学/.test(label)) return "individual_student_response";
@@ -113,7 +113,8 @@ export function inferLearningCheckType(text: string): LearningCheckType {
 }
 
 export function isCategorySupported(category: EvidenceCategory, lessonFormat: LessonFormat, capabilityMatrix: CapabilityMatrix) {
-  if (lessonFormat === "recorded_online_class" && ["wait_time", "student_response", "response_pattern", "classroom_management"].includes(category)) return false;
+  if (lessonFormat === "recorded_online_class" && ["wait_time", "student_response", "feedback_quality", "response_pattern", "classroom_management", "follow_up", "misconception_handling"].includes(category)) return false;
+  if (isTeacherCertificationInterview(lessonFormat) && ["wait_time", "student_response", "response_pattern", "technical_issue", "classroom_management", "misconception_handling"].includes(category)) return false;
   if (category === "classroom_management") return capabilityMatrix.canAnalyzeClassroomManagementLanguage;
   if (category === "learning_check_level") return capabilityMatrix.canAnalyzeLearningCheckLevel;
   if (category === "response_pattern") return capabilityMatrix.canDetectTeacherSelfAnswer;
@@ -125,11 +126,22 @@ export function isCategorySupported(category: EvidenceCategory, lessonFormat: Le
 
 export function applicableFormatsForCategory(category: EvidenceCategory): LessonFormat[] {
   if (category === "technical_issue") return ["live_online_class"];
-  if (category === "self_check") return ["recorded_online_class"];
-  if (["wait_time", "student_response", "classroom_management"].includes(category)) {
-    return ["offline_classroom_recording", "live_online_class"];
+  if (category === "self_check") return ["recorded_online_class", "teacher_certification_interview", "teacher_qualification_demo"];
+  if (["wait_time", "student_response", "feedback_quality", "classroom_management"].includes(category)) {
+    return category === "feedback_quality"
+      ? ["offline_classroom_recording", "live_online_class", "teacher_certification_interview", "teacher_qualification_demo"]
+      : ["offline_classroom_recording", "live_online_class"];
   }
-  return ["offline_classroom_recording", "live_online_class", "recorded_online_class"];
+  if (["misconception_handling", "follow_up"].includes(category)) {
+    return category === "follow_up"
+      ? ["offline_classroom_recording", "live_online_class", "teacher_certification_interview", "teacher_qualification_demo"]
+      : ["offline_classroom_recording", "live_online_class"];
+  }
+  return ["offline_classroom_recording", "live_online_class", "recorded_online_class", "teacher_certification_interview", "teacher_qualification_demo"];
+}
+
+export function isTeacherCertificationInterview(lessonFormat: LessonFormat) {
+  return lessonFormat === "teacher_certification_interview" || lessonFormat === "teacher_qualification_demo";
 }
 
 export function inferEvidenceSentiment(values: {
@@ -149,7 +161,7 @@ export function buildDefaultTeacherView(values: {
   title: string;
   fact: string;
   interpretation: string;
-  suggestion: string;
+  suggestion?: string;
   sentiment?: TeachingEvidenceCard["sentiment"];
   learningCheck?: TeachingEvidenceCard["learningCheck"];
 }) {
@@ -158,21 +170,18 @@ export function buildDefaultTeacherView(values: {
     return {
       title: values.title,
       observation: values.interpretation,
-      teachingMeaning: "这是一个值得保留的课堂亮点。",
-      nextStep: values.suggestion
+      teachingMeaning: "这是一个值得保留的课堂亮点。"
     };
   }
   if (sentiment === "negative") {
     return {
       title: values.title,
-      observation: values.interpretation,
-      nextStep: values.suggestion
+      observation: values.interpretation
     };
   }
   return {
     title: values.title,
-    observation: values.interpretation || values.fact,
-    nextStep: values.suggestion
+    observation: values.interpretation || values.fact
   };
 }
 
@@ -181,7 +190,7 @@ export function evidenceCard(input: TeachingEvidenceInput, values: {
   title: string;
   fact: string;
   interpretation: string;
-  suggestion: string;
+  suggestion?: string;
   sentiment?: TeachingEvidenceCard["sentiment"];
   segments: TranscriptSegment[];
   confidence: EvidenceConfidence;
@@ -199,7 +208,6 @@ export function evidenceCard(input: TeachingEvidenceInput, values: {
     title: values.title,
     fact: values.fact,
     interpretation: values.interpretation,
-    suggestion: values.suggestion,
     startMs,
     endMs,
     quote: values.segments.map((segment) => trimQuote(segment.text)).join(" "),
@@ -212,7 +220,16 @@ export function evidenceCard(input: TeachingEvidenceInput, values: {
     reviewStatus: "pending_review",
     learningCheck: values.learningCheck,
     analysis: values.analysis,
-    teacherView: values.teacherView || buildDefaultTeacherView(values)
+    teacherView: evidenceTeacherView(values.teacherView || buildDefaultTeacherView(values))
+  };
+}
+
+function evidenceTeacherView(view: TeachingEvidenceCard["teacherView"]): TeachingEvidenceCard["teacherView"] {
+  if (!view) return undefined;
+  return {
+    title: view.title,
+    observation: view.observation,
+    teachingMeaning: view.teachingMeaning
   };
 }
 

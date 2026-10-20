@@ -11,7 +11,7 @@ import {
   updateTranscriptSegmentsProjection
 } from "@class-reflect/database";
 import { detectClassroomEvents } from "@class-reflect/domain";
-import { assertEvidenceHasSource, validateTeachingEvidenceCard } from "@class-reflect/guardrails";
+import { assertEvidenceHasSource, resolveTeachingEvidenceCardTiming, validateTeachingEvidenceCard } from "@class-reflect/guardrails";
 import { calculateDeterministicClassroomMetrics } from "@class-reflect/metrics";
 import { capabilityMatrixByLessonFormat } from "@class-reflect/shared-types";
 import type { ProcessorResult, WorkflowProcessor } from "./types";
@@ -147,6 +147,7 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
       throw new Error("还没有可用于生成教学证据的逐字稿");
     }
 
+    const classroomEvents = await listClassroomEvents({ lessonId: source.lesson.id, videoId: context.workflow.videoId });
     const result = await runTeachingEvidenceAgent({
       lessonId: source.lesson.id,
       traceId: context.traceId,
@@ -154,16 +155,24 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
       capabilityMatrix: capabilityMatrixByLessonFormat[source.lesson.lessonFormat],
       transcriptSegments: source.transcriptSegments,
       metrics: source.metrics,
-      classroomEvents: await listClassroomEvents({ lessonId: source.lesson.id, videoId: context.workflow.videoId }),
+      classroomEvents,
       generationConfig: {
         language: "zh-CN",
-        maxEvidenceCards: 6,
         minimumConfidence: "low"
       }
     });
 
-    const validCards = result.output.evidenceCards.filter((card) =>
-      validateTeachingEvidenceCard({ lesson_format: source.lesson.lessonFormat, card }).valid
+    const resolvedCards = result.output.evidenceCards.map((card) =>
+      resolveTeachingEvidenceCardTiming(card, source.transcriptSegments)
+    );
+    const validCards = resolvedCards.filter((card) =>
+      validateTeachingEvidenceCard({
+        lesson_format: source.lesson.lessonFormat,
+        card,
+        transcriptSegments: source.transcriptSegments,
+        metrics: source.metrics,
+        classroomEvents
+      }).valid
     );
     const savedCards = await saveTeachingEvidenceCards({
       lessonId: source.lesson.id,

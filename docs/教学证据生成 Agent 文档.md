@@ -2,8 +2,8 @@
 
 # 教学证据生成 Agent 文档
 
-**适用版本：** v0.1.1
-**修订范围：** 课型字段、课堂回应分类、评价闭环分级、考试与复习场景、课堂管理语言过滤、未来规划
+**适用版本：** v0.1.2
+**修订范围：** 课型字段、课堂回应分类、评价闭环分级、考试与复习场景、课堂管理语言过滤、教资面试模拟试讲、未来规划
 **其余内容：** 保持 v0.1.0 不变
 
 ## 一、全局字段名称调整
@@ -42,7 +42,20 @@ recorded_online_class
 export type LessonFormat =
   | "offline_classroom_recording"
   | "live_online_class"
-  | "recorded_online_class";
+  | "recorded_online_class"
+  | "teacher_certification_interview";
+```
+
+兼容旧字段值：
+
+```
+teacher_qualification_demo
+```
+
+系统读入旧值时应归一到：
+
+```
+teacher_certification_interview
 ```
 
 数据库、API、Agent 输入、Agent 输出和日志中统一使用：
@@ -63,13 +76,14 @@ lesson_format
 lesson_format
 ```
 
-三个可选值：
+四个可选值：
 
 | 页面显示     | 数据库/接口字段值             | 适合场景                                                     |
 | ------------ | ----------------------------- | ------------------------------------------------------------ |
 | 线下课堂录像 | `offline_classroom_recording` | 教室实录，分析提问、等待、学生回答、齐答、反馈、讲练节奏     |
 | 直播网课     | `live_online_class`           | 实时线上课，分析连麦互动、技术停顿、可听见回应、线上节奏     |
 | 录播网课     | `recorded_online_class`       | 预先录制课程，分析结构、语速、表达清晰度、信息密度、示例和总结 |
+| 教资面试模拟试讲 | `teacher_certification_interview` | 无真实学生的模拟授课，分析目标对齐、导入、模拟提问、模拟反馈、解释、支架、重点难点、教学语言和结尾收束 |
 
 ### 2.2 前端展示
 
@@ -81,6 +95,7 @@ lesson_format
 ○ 线下课堂录像
 ○ 直播网课
 ○ 录播网课
+○ 教资面试模拟试讲
 ```
 
 前端提交示例：
@@ -104,10 +119,14 @@ check (
   lesson_format in (
     'offline_classroom_recording',
     'live_online_class',
-    'recorded_online_class'
+    'recorded_online_class',
+    'teacher_certification_interview',
+    'teacher_qualification_demo'
   )
 )
 ```
+
+迁移完成后，旧值 `teacher_qualification_demo` 建议统一更新为 `teacher_certification_interview`；约束中可暂时保留旧值，用于历史数据兼容和回滚。
 
 ### 2.4 Agent输入类型
 
@@ -164,7 +183,7 @@ export interface TeachingEvidenceOutput {
 }
 ```
 
-## 三、三种课型的分析边界
+## 三、课型的分析边界
 
 ### 3.1 线下课堂录像
 
@@ -273,6 +292,54 @@ recorded_online_class
 - 教师示范思考过程。
 
 不能直接按“教师没有等待学生回答”处理。
+
+### 3.4 教资面试模拟试讲
+
+字段值：
+
+```
+teacher_certification_interview
+```
+
+旧字段兼容：
+
+```
+teacher_qualification_demo
+```
+
+适用范围：
+
+- 教师资格证面试模拟试讲；
+- 无真实学生、无真实课堂互动；
+- 教师通过“这位同学说……”“很好，请坐”等方式模拟学生回应；
+- 系统只生成教学证据，不给官方分数，也不判断是否通过考试。
+
+重点分析：
+
+- `teaching_objective_alignment`：目标、重难点、活动和评价是否一致；
+- `lesson_structure`：导入、新授、练习、总结是否有清晰推进；
+- `question_quality`：问题是否明确、有层次、能引出思考；
+- `simulated_interaction_quality`：模拟互动是否服务教学目标，而不是机械表演；
+- `feedback_quality`：模拟反馈是否回应学生观点，而不只是“很好、对”；
+- `explanation_quality`：解释是否讲清 why，而不是只给结论；
+- `cognitive_scaffolding`：是否有提示、分步、过渡和难度支架；
+- `teaching_highlight`：是否突出重点、难点和关键方法；
+- `teacher_language`：语言是否准确、简洁、指令清楚、逻辑连贯；
+- `closure_quality`：结尾是否回扣目标、总结关键内容；
+- `teaching_evaluation`：是否体现过程性评价意识；
+- `knowledge_accuracy`：是否存在需要人工复核的潜在知识风险。
+
+不得生成：
+
+- 没有真实学生回应；
+- 缺乏真实互动；
+- 教师自问自答；
+- 等待时间不足；
+- 未给真实学生反馈；
+- 课堂管理问题；
+- 直播或设备技术问题。
+
+注意：教师模拟学生回答是试讲的正常形式。只有当模拟互动“机械、完美脚本化、学生回答不影响后续教学”时，才可作为 `simulated_interaction_quality` 的负证据。
 
 ## 四、区分齐答、个别回答和教师代答
 
@@ -1095,6 +1162,44 @@ export type EvidenceCategory =
 | `structured_review`     | 是否进行结构化整理                     |
 | `weakness_detection`    | 是否通过任务定位薄弱点                 |
 
+### 9.1 教资面试模拟试讲新增类别
+
+教资面试模拟试讲不新建 Agent，继续使用教学证据生成 Agent，只通过 `lesson_format=teacher_certification_interview` 启用专属类别组合。
+
+| 类别 | 含义 | 正证据示例 | 负证据示例 |
+| --- | --- | --- | --- |
+| `teaching_objective_alignment` | 目标、重难点、活动和评价是否一致 | 活动围绕明确目标展开 | 目标、练习、总结之间脱节 |
+| `simulated_interaction_quality` | 模拟互动是否服务教学目标 | 虚拟学生回答推动后续解释或比较 | 机械“同学们说得真好”，回答不影响教学 |
+| `teaching_highlight` | 是否突出重点难点 | 明确指出关键条件、易错点或核心方法 | 重点一带而过，所有内容平均用力 |
+| `teacher_language` | 教学语言是否准确、清楚、简洁、连贯 | 指令明确，术语准确，过渡自然 | 指令含糊，术语未解释，口头表达影响理解 |
+| `closure_quality` | 结尾是否形成教学收束 | 回扣目标并总结关键方法 | 只有“今天就到这里”，没有有效总结 |
+| `teaching_evaluation` | 是否体现过程性评价意识 | 通过提问、练习或反馈检查学习情况 | 只有结果性判断，没有说明评价依据 |
+| `knowledge_accuracy` | 是否存在潜在知识性风险 | 概念表述准确，条件说明完整 | 可能存在概念混淆或条件遗漏，需人工复核 |
+
+以下内容不作为独立类别，作为 `analysis.reasonTags` 使用：
+
+```
+mechanical_interaction
+teacher_monologue
+scripted_student_response
+performative_questioning
+weak_feedback
+weak_transition
+weak_closure
+overlong_introduction
+unclear_objective
+no_key_point
+knowledge_risk
+time_management
+unclear_instruction
+excessive_filler
+missed_opportunity
+direct_answer
+weak_scaffolding
+```
+
+这样可以覆盖手册中的高价值问题，同时避免类别过多、模型输出负担过重。
+
 ## 十、System Prompt整合替换版
 
 将原 System Prompt 中的“课型规则”部分替换为以下内容，并在学生相关边界后追加“课堂回应”和“教学场景”规则。
@@ -1120,7 +1225,7 @@ export type EvidenceCategory =
 
 1. fact只描述可观察事实。
 2. interpretation只能给出谨慎解释。
-3. suggestion必须具体、可执行，并与事实直接对应。
+3. 本 Agent 只负责证据生成，不负责给教学建议；`suggestion` 保留为旧字段兼容，但新流程不要求 LLM 输出。
 4. 不评价教师人格、态度、能力或教学水平。
 5. 不给教师或课堂打分。
 6. 不使用“教师能力差、课堂失败、学生不认真”等结论。
@@ -1139,7 +1244,7 @@ export type EvidenceCategory =
 
 必须读取 lesson_format。
 
-lesson_format有三个可选值：
+lesson_format有四个正式可选值：
 
 1. offline_classroom_recording：
    线下课堂录像。
@@ -1163,6 +1268,13 @@ lesson_format有三个可选值：
    “请学生回答”“点名或举手”等真实课堂互动建议，
    放到 question_quality、learning_check_level、
    weakness_detection 等其他类别中变相输出。
+
+4. teacher_certification_interview：
+   教资面试模拟试讲，无真实学生。
+   不得因为没有真实学生说话、回答、参与或真实互动生成负证据。
+   教师模拟学生回答是正常试讲行为，不得机械判为教师自问自答。
+   可分析目标对齐、结构、重点难点、问题质量、模拟互动质量、模拟反馈、解释、支架、例子、教学语言、过程性评价和结尾收束。
+   知识性错误缺少可靠参考依据时，只能作为潜在知识风险并标记 needs_review。
    录播课中的提问句只能按自学提示、结构引导、
    讲解衔接或信息密度来分析。
 

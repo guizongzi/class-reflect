@@ -6,6 +6,7 @@ import {
   updateWorkflowRunStatus
 } from "@class-reflect/database";
 import { buildReportFromAcceptedEvidence } from "@class-reflect/domain";
+import type { LessonFormat } from "@class-reflect/shared-types";
 import type { ProcessorResult, WorkflowProcessor } from "./types";
 
 export const waitHumanReviewProcessor: WorkflowProcessor = {
@@ -29,9 +30,7 @@ export const generateReportProcessor: WorkflowProcessor = {
         id: detail.lesson.id,
         lessonTitle: detail.lesson.lessonTitle,
         courseTitle: detail.lesson.courseTitle || "课堂复盘",
-        lessonFormat: detail.lesson.lessonFormat === "live_online_class" || detail.lesson.lessonFormat === "recorded_online_class"
-          ? detail.lesson.lessonFormat
-          : "offline_classroom_recording",
+        lessonFormat: normalizeReportLessonFormat(detail.lesson.lessonFormat),
         status: detail.lesson.status as never
       },
       evidenceCards,
@@ -52,6 +51,19 @@ export const generateReportProcessor: WorkflowProcessor = {
     };
   }
 };
+
+function normalizeReportLessonFormat(value: string | null | undefined): LessonFormat {
+  if (
+    value === "offline_classroom_recording" ||
+    value === "live_online_class" ||
+    value === "recorded_online_class" ||
+    value === "teacher_certification_interview" ||
+    value === "teacher_qualification_demo"
+  ) {
+    return value === "teacher_qualification_demo" ? "teacher_certification_interview" : value;
+  }
+  return "offline_classroom_recording";
+}
 
 export const exportReportProcessor: WorkflowProcessor = {
   stepKey: "export_report",
