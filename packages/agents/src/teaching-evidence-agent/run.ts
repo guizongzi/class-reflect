@@ -1,4 +1,5 @@
-import { capabilityMatrixByLessonFormat, type TeachingEvidenceCard } from "@class-reflect/shared-types";
+import { capabilityMatrixByLessonFormat, type CapabilityMatrix, type EvidenceCategory, type TeachingEvidenceCard } from "@class-reflect/shared-types";
+import type { TranscriptSegment } from "@class-reflect/shared-types";
 import { tryRunLlmAgent } from "../llm";
 import type { AgentResult, TeachingEvidenceInput, TeachingEvidenceOutput } from "../types";
 import { isTeachingEvidenceOutput } from "./validator";
@@ -6,42 +7,30 @@ import {
   buildClassroomManagementCard,
   buildErrorAnalysisCard,
   buildOralConfirmationCard,
+  buildSelfCheckCard,
   buildTeacherSelfAnswerCard,
-  buildTechnicalIssueCard
+  buildTechnicalIssueCard,
+  buildWaitTimeCard
 } from "./cards";
-import { buildTeachingEvidenceLlmPayload } from "./compact-input";
+import { buildTeachingEvidenceLlmPayload, resolveMaxEvidenceCards } from "./compact-input";
 import { defaultEvidenceCategories } from "./constants";
+import { defaultCategoriesForLessonFormat, evidenceProfileByLessonFormat, semanticEvidenceCategoriesForLlm } from "./profiles";
 import { inferInstructionalContext, isCategorySupported, meetsMinimumConfidence } from "./helpers";
+import { buildSentenceIdMap, restoreMappedSentenceIds } from "../sentence-id-map";
 
 export async function runTeachingEvidenceAgent(
   input: TeachingEvidenceInput
 ): Promise<AgentResult<TeachingEvidenceOutput>> {
-  const llmOutput = await tryRunLlmAgent<TeachingEvidenceOutput>({
-    agentName: "teaching-evidence-agent",
-    promptVersion: "teaching-evidence.llm.v1",
-    traceId: input.traceId,
-    payload: buildTeachingEvidenceLlmPayload(input),
-    validate: isTeachingEvidenceOutput
-  });
-
-  if (llmOutput) {
-    return {
-      output: llmOutput,
-      promptVersion: "teaching-evidence.llm.v1",
-      warnings: []
-    };
-  }
-
-    const capabilityMatrix =
+  const capabilityMatrix =
     input.capabilityMatrix ||
     capabilityMatrixByLessonFormat[input.lesson_format];
 
   const enabledCategories =
     input.generationConfig?.enabledCategories ||
-    defaultEvidenceCategories;
+    defaultCategoriesForLessonFormat(input.lesson_format);
+  const profile = evidenceProfileByLessonFormat[input.lesson_format];
 
-  const maxEvidenceCards =
-    input.generationConfig?.maxEvidenceCards || 6;
+  const maxEvidenceCards = resolveMaxEvidenceCards(input);
 
   const minimumConfidence =
     input.generationConfig?.minimumConfidence || "low";
@@ -49,6 +38,7 @@ export async function runTeachingEvidenceAgent(
   const sortedSegments = [...input.transcriptSegments].sort(
     (a, b) => a.startMs - b.startMs
   );
+  const sentenceIdMap = buildSentenceIdMap(input.transcriptSegments);
 
   const instructionalContext =
     inferInstructionalContext(sortedSegments);
@@ -59,7 +49,12 @@ export async function runTeachingEvidenceAgent(
     [];
 
   for (const category of defaultEvidenceCategories) {
-    if (!enabledCategories.includes(category)) {
+    if ((profile.disabledCategories as typeof defaultEvidenceCategories).includes(category)) {
+      skippedCategories.push({
+        category,
+        reason: "not_applicable_to_lesson_format"
+      });
+    } else if (!enabledCategories.includes(category)) {
       skippedCategories.push({
         category,
         reason: "category_disabled"
@@ -105,16 +100,59 @@ export async function runTeachingEvidenceAgent(
   };
 
   pushCard(buildOralConfirmationCard(input, sortedSegments));
+  pushCard(buildWaitTimeCard(input, sortedSegments));
   pushCard(buildTeacherSelfAnswerCard(input, sortedSegments));
   pushCard(buildClassroomManagementCard(input, sortedSegments));
   pushCard(buildTechnicalIssueCard(input, sortedSegments));
-  pushCard(
-    buildErrorAnalysisCard(
-      input,
-      sortedSegments,
-      instructionalContext
-    )
-  );
+  pushCard(buildSelfCheckCard(input, sortedSegments));
+
+  const semanticEnabledCategories = semanticEvidenceCategoriesForLlm(enabledCategories)
+    .filter((category) => isCategorySupported(category, input.lesson_format, capabilityMatrix));
+  const llmOutput = semanticEnabledCategories.length
+    ? await tryRunLlmAgent<TeachingEvidenceOutput>({
+      agentName: "teaching-evidence-agent",
+      promptVersion: "teaching-evidence.llm.v1",
+      traceId: input.traceId,
+      payload: buildTeachingEvidenceLlmPayload({
+        ...input,
+        generationConfig: {
+          language: input.generationConfig?.language || "zh-CN",
+          maxEvidenceCards: Math.max(maxEvidenceCards - cards.length, 0),
+          minimumConfidence,
+          enabledCategories: semanticEnabledCategories
+        }
+      }),
+      validate: isTeachingEvidenceOutput
+    })
+    : null;
+
+  if (llmOutput) {
+    const restoredCards = llmOutput.evidenceCards.map((card) => ({
+      ...card,
+      transcriptSegmentIds: restoreMappedSentenceIds(card.transcriptSegmentIds, sentenceIdMap)
+    }));
+    for (const card of filterLlmEvidenceCards(
+      resolveEvidenceCardTiming(restoredCards, input.transcriptSegments),
+      {
+        lessonFormat: input.lesson_format,
+        enabledCategories: semanticEnabledCategories,
+        positiveCategories: profile.positiveCategories,
+        negativeCategories: profile.negativeCategories,
+        capabilityMatrix,
+        existingCards: cards
+      }
+    )) {
+      pushCard(card);
+    }
+  } else {
+    pushCard(
+      buildErrorAnalysisCard(
+        input,
+        sortedSegments,
+        instructionalContext
+      )
+    );
+  }
 
   return {
     output: {
@@ -130,9 +168,65 @@ export async function runTeachingEvidenceAgent(
         generatedEvidenceCount: cards.length
       }
     },
-    promptVersion: "teaching-evidence.rule-based.v0.1",
-    warnings: [
-      "LLM 未返回有效结果，已回退到规则引擎"
+    promptVersion: llmOutput ? "teaching-evidence.hybrid.v1" : "teaching-evidence.rule-based.v0.2",
+    warnings: llmOutput ? [] : [
+      "LLM 未返回有效结果，已使用规则证据生成器"
     ]
   };
+}
+
+function filterLlmEvidenceCards(
+  cards: TeachingEvidenceCard[],
+  context: {
+    lessonFormat: TeachingEvidenceInput["lesson_format"];
+    enabledCategories: EvidenceCategory[];
+    positiveCategories: EvidenceCategory[];
+    negativeCategories: EvidenceCategory[];
+    capabilityMatrix: CapabilityMatrix;
+    existingCards: TeachingEvidenceCard[];
+  }
+): TeachingEvidenceCard[] {
+  const enabled = new Set(context.enabledCategories || []);
+  const positive = new Set(context.positiveCategories || []);
+  const negative = new Set(context.negativeCategories || []);
+  const accepted: TeachingEvidenceCard[] = [];
+
+  for (const card of cards) {
+    if (!enabled.has(card.category)) continue;
+    if (!isCategorySupported(card.category, context.lessonFormat, context.capabilityMatrix)) continue;
+    if (card.sentiment === "negative" && !negative.has(card.category)) continue;
+    if (card.sentiment === "positive" && positive.size > 0 && !positive.has(card.category) && !negative.has(card.category)) continue;
+    if (isDuplicateEvidenceCard(card, [...context.existingCards, ...accepted])) continue;
+    accepted.push(card);
+  }
+
+  return accepted;
+}
+
+function isDuplicateEvidenceCard(card: TeachingEvidenceCard, existingCards: TeachingEvidenceCard[]) {
+  const cardIds = new Set(card.transcriptSegmentIds);
+  if (!cardIds.size) return false;
+  return existingCards.some((existing) => {
+    if (existing.category !== card.category) return false;
+    if (existing.sentiment !== card.sentiment) return false;
+    const existingIds = new Set(existing.transcriptSegmentIds);
+    const overlap = [...cardIds].filter((id) => existingIds.has(id)).length;
+    return overlap > 0 && overlap / Math.min(cardIds.size, existingIds.size || 1) >= 0.8;
+  });
+}
+
+function resolveEvidenceCardTiming(
+  cards: TeachingEvidenceCard[],
+  transcriptSegments: TranscriptSegment[]
+): TeachingEvidenceCard[] {
+  const byId = new Map(transcriptSegments.map((segment) => [segment.id, segment]));
+  return cards.map((card) => {
+    const segments = card.transcriptSegmentIds.map((id) => byId.get(id));
+    if (!segments.length || segments.some((segment) => !segment)) return card;
+    return {
+      ...card,
+      startMs: Math.min(...segments.map((segment) => segment!.startMs)),
+      endMs: Math.max(...segments.map((segment) => segment!.endMs))
+    };
+  });
 }

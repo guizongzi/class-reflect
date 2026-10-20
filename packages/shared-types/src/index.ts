@@ -13,10 +13,15 @@ export const lessonFormatOptions = [
     value: "recorded_online_class",
     label: "录播网课",
     description: "预先录制的教学视频，重点看结构、语速和自学友好度。"
+  },
+  {
+    value: "teacher_certification_interview",
+    label: "教资面试模拟试讲",
+    description: "无真实学生的模拟授课，重点看目标、导入、提问设计、讲解、支架、板书/总结和试讲表现。"
   }
 ] as const;
 
-export type LessonFormat = (typeof lessonFormatOptions)[number]["value"];
+export type LessonFormat = (typeof lessonFormatOptions)[number]["value"] | "teacher_qualification_demo";
 
 export type ResponsePattern =
   | "individual_student_response"
@@ -76,7 +81,18 @@ export type EvidenceCategory =
   | "variation_practice"
   | "knowledge_connection"
   | "structured_review"
-  | "weakness_detection";
+  | "weakness_detection"
+  | "explanation_quality"
+  | "misconception_handling"
+  | "cognitive_scaffolding"
+  | "example_quality"
+  | "teaching_objective_alignment"
+  | "simulated_interaction_quality"
+  | "teaching_highlight"
+  | "teacher_language"
+  | "closure_quality"
+  | "teaching_evaluation"
+  | "knowledge_accuracy";
 
 export type EvidenceConfidence = "low" | "medium" | "high" | "needs_review";
 
@@ -145,6 +161,38 @@ export const capabilityMatrixByLessonFormat = {
     canAnalyzeSpeechRate: true,
     canAnalyzeInformationDensity: true,
     canAnalyzeSelfCheckPrompt: true
+  },
+  teacher_certification_interview: {
+    canObserveTeacherSpeech: true,
+    canObserveStudentSpeech: false,
+    canDistinguishIndividualResponse: false,
+    canDistinguishChoralResponse: false,
+    canDetectTeacherSelfAnswer: false,
+    canMeasureWaitTime: false,
+    canAnalyzeClassroomManagementLanguage: false,
+    canAnalyzeLearningCheckLevel: true,
+    canAnalyzeLiveAudioInteraction: false,
+    canAnalyzeChatInteraction: false,
+    canAnalyzePlatformInteraction: false,
+    canAnalyzeSpeechRate: true,
+    canAnalyzeInformationDensity: true,
+    canAnalyzeSelfCheckPrompt: true
+  },
+  teacher_qualification_demo: {
+    canObserveTeacherSpeech: true,
+    canObserveStudentSpeech: false,
+    canDistinguishIndividualResponse: false,
+    canDistinguishChoralResponse: false,
+    canDetectTeacherSelfAnswer: false,
+    canMeasureWaitTime: false,
+    canAnalyzeClassroomManagementLanguage: false,
+    canAnalyzeLearningCheckLevel: true,
+    canAnalyzeLiveAudioInteraction: false,
+    canAnalyzeChatInteraction: false,
+    canAnalyzePlatformInteraction: false,
+    canAnalyzeSpeechRate: true,
+    canAnalyzeInformationDensity: true,
+    canAnalyzeSelfCheckPrompt: true
   }
 } satisfies Record<LessonFormat, CapabilityMatrix>;
 
@@ -155,6 +203,22 @@ export type TranscriptSegment = {
   speakerLabel?: string | null;
   text: string;
   confidence?: number | null;
+  deliveryFeatures?: TranscriptDeliveryFeatures;
+};
+
+export type TranscriptDeliveryFeatures = {
+  fillerWordCount: number;
+  fillerWords: string[];
+  repetitionCount: number;
+  selfCorrectionCount: number;
+  incompleteUtterance: boolean;
+  possibleQuestion: boolean;
+  possibleInstruction: boolean;
+  possibleAnswer: boolean;
+  possibleFeedback: boolean;
+  pauseBeforeMs: number | null;
+  pauseAfterMs: number | null;
+  speakerTurnChanged: boolean;
 };
 
 export type LessonSection = {
@@ -205,7 +269,7 @@ export type TeachingEvidenceCard = {
   title: string;
   fact: string;
   interpretation: string;
-  suggestion: string;
+  suggestion?: string;
   analysis?: {
     evidenceCategory: EvidenceCategory;
     utteranceType?: string;
@@ -214,6 +278,31 @@ export type TeachingEvidenceCard = {
     evidenceStrength?: EvidenceStrength;
     internalReason?: string;
     suggestionDirection?: string;
+    reasonTags?: Array<
+      | "missed_opportunity"
+      | "low_level_question"
+      | "generic_feedback"
+      | "unhandled_misconception"
+      | "reasoning_gap"
+      | "weak_transfer"
+      | "unclear_self_check"
+      | "mechanical_interaction"
+      | "teacher_monologue"
+      | "scripted_student_response"
+      | "performative_questioning"
+      | "weak_feedback"
+      | "weak_transition"
+      | "weak_closure"
+      | "overlong_introduction"
+      | "unclear_objective"
+      | "no_key_point"
+      | "knowledge_risk"
+      | "time_management"
+      | "unclear_instruction"
+      | "excessive_filler"
+      | "direct_answer"
+      | "weak_scaffolding"
+    >;
   };
   teacherView?: {
     title: string;

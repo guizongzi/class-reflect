@@ -3,7 +3,9 @@ import { z } from "zod";
 export const LessonFormatSchema = z.enum([
   "offline_classroom_recording",
   "live_online_class",
-  "recorded_online_class"
+  "recorded_online_class",
+  "teacher_certification_interview",
+  "teacher_qualification_demo"
 ]);
 
 export const CreateLessonRequestSchema = z.object({

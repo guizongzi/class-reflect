@@ -8,6 +8,7 @@ import {
   type Report,
   type ReviewStatus,
   type TeachingEvidenceCard,
+  type TranscriptDeliveryFeatures,
   type TranscriptSegment,
   type WorkflowStatus,
   type WorkflowStepKey,
@@ -152,6 +153,7 @@ type TranscriptLayerRow = Record<string, unknown> & {
   teacher_speaker_identity_id?: unknown;
   confidence?: unknown;
   agent_confidence?: unknown;
+  delivery_features?: unknown;
 };
 
 let pool: Pool | null = null;
@@ -424,7 +426,8 @@ export async function getTeachingEvidenceSource(input: {
       teacher_speaker_role,
       teacher_speaker_identity_id,
       confidence,
-      agent_confidence
+      agent_confidence,
+      delivery_features
     from transcript_segments
     where lesson_id = $1 and video_id = $2
     order by start_ms
@@ -490,7 +493,7 @@ export async function saveTranscriptSegments(input: {
             source
           )
         values ($1, $2, $3, $4, $5, $6, $7, $7, $8::jsonb, $9, $10::jsonb, $11::jsonb, $12, $13, $14, null, null, $15, 'asr')
-        returning id, start_ms, end_ms, speaker_label, raw_text, agent_normalized_text, teacher_edited_text, confidence
+        returning id, start_ms, end_ms, speaker_label, raw_text, agent_normalized_text, teacher_edited_text, confidence, delivery_features
       `, [
         sentence.id,
         input.lessonId,
@@ -540,7 +543,8 @@ export async function listTranscriptSegments(input: {
       teacher_speaker_role,
       teacher_speaker_identity_id,
       confidence,
-      agent_confidence
+      agent_confidence,
+      delivery_features
     from transcript_segments
     where lesson_id = $1 and video_id = $2
     order by start_ms
@@ -700,7 +704,8 @@ export async function updateTranscriptSegmentText(input: {
       teacher_speaker_role,
       teacher_speaker_identity_id,
       confidence,
-      agent_confidence
+      agent_confidence,
+      delivery_features
   `, [
       input.lessonId,
       input.segmentId,
@@ -951,7 +956,7 @@ export async function saveTeachingEvidenceCards(input: {
       input.videoId,
       card.category,
       `${card.title}\n${card.fact}\n${card.interpretation}`,
-      card.suggestion,
+      card.suggestion || null,
       card.startMs,
       card.endMs,
       card.quote,
@@ -1761,7 +1766,8 @@ function mapTranscriptLayerRow(row: TranscriptLayerRow): TranscriptSegment {
     }),
     confidence: row.agent_confidence == null
       ? row.confidence == null ? null : Number(row.confidence)
-      : Number(row.agent_confidence)
+      : Number(row.agent_confidence),
+    deliveryFeatures: parseTranscriptDeliveryFeatures(row.delivery_features)
   };
 }
 
@@ -1947,14 +1953,46 @@ function parseJsonRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function parseTranscriptDeliveryFeatures(value: unknown): TranscriptDeliveryFeatures | undefined {
+  const raw = parseJsonRecord(value);
+  if (!Object.keys(raw).length) return undefined;
+  return {
+    fillerWordCount: numberValue(raw.fillerWordCount),
+    fillerWords: Array.isArray(raw.fillerWords) ? raw.fillerWords.map((item) => String(item)).filter(Boolean) : [],
+    repetitionCount: numberValue(raw.repetitionCount),
+    selfCorrectionCount: numberValue(raw.selfCorrectionCount),
+    incompleteUtterance: Boolean(raw.incompleteUtterance),
+    possibleQuestion: Boolean(raw.possibleQuestion),
+    possibleInstruction: Boolean(raw.possibleInstruction),
+    possibleAnswer: Boolean(raw.possibleAnswer),
+    possibleFeedback: Boolean(raw.possibleFeedback),
+    pauseBeforeMs: nullableNumber(raw.pauseBeforeMs),
+    pauseAfterMs: nullableNumber(raw.pauseAfterMs),
+    speakerTurnChanged: Boolean(raw.speakerTurnChanged)
+  };
+}
+
+function numberValue(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function normalizeLessonFormat(value: unknown): LessonFormat {
   if (typeof value === "string") {
     const normalized = value.trim();
     if (normalized === "线下课堂录像" || normalized === "线下课堂" || normalized === "线下") return "offline_classroom_recording";
     if (normalized === "直播网课" || normalized === "直播") return "live_online_class";
     if (normalized === "录播网课" || normalized === "录播" || normalized === "录制课") return "recorded_online_class";
+    if (normalized === "教资面试模拟试讲" || normalized === "教资面试试讲" || normalized === "教资试讲" || normalized === "试讲" || normalized === "教师资格证面试") return "teacher_certification_interview";
   }
-  if (value === "live_online_class" || value === "recorded_online_class" || value === "offline_classroom_recording") return value;
+  if (value === "teacher_qualification_demo") return "teacher_certification_interview";
+  if (value === "live_online_class" || value === "recorded_online_class" || value === "offline_classroom_recording" || value === "teacher_certification_interview") return value;
   return "offline_classroom_recording";
 }
 

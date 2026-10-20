@@ -16,6 +16,7 @@ import {
   inferResponsePattern,
   isClassroomManagementText,
   isTeacher,
+  isTeacherCertificationInterview,
   learningCheck,
   matchesAny,
   trimQuote
@@ -99,6 +100,49 @@ export function buildTeacherSelfAnswerCard(input: TeachingEvidenceInput, segment
       teachingMeaning: "这个处理能让讲解节奏比较连贯；如果当时希望了解学生思路，可以给学生更明确的回答机会。",
       nextStep: "可以根据目的选择两种说法：想让学生回答时先点名或邀请举手；只是过渡讲解时直接用陈述句衔接。",
       exampleWording: "“先请一位同学说说你的判断依据。”"
+    }
+  });
+}
+
+export function buildWaitTimeCard(input: TeachingEvidenceInput, segments: TranscriptSegment[]): TeachingEvidenceCard | null {
+  if (input.lesson_format === "recorded_online_class" || isTeacherCertificationInterview(input.lesson_format)) return null;
+  const pair = findAdjacentPair(segments, (current, next) =>
+    isTeacher(current) &&
+    hasQuestionMarker(current.text) &&
+    !isClassroomManagementText(current.text) &&
+    Boolean(next)
+  );
+  if (!pair) return null;
+  const [question, next] = pair;
+  const waitMs = Math.max(next.startMs - question.endMs, 0);
+  if (waitMs > 8000) return null;
+  const waitSeconds = (waitMs / 1000).toFixed(1);
+  const isShortWait = waitMs < 3000;
+  return evidenceCard(input, {
+    category: "wait_time",
+    title: isShortWait ? "提问后的等待时间较短" : "提问后留出了短暂停顿",
+    fact: `教师在${formatTime(question.startMs)}提出问题后，约${waitSeconds}秒进入下一句。`,
+    interpretation: isShortWait
+      ? `教师提出“${trimQuote(question.text)}”后，约${waitSeconds}秒进入“${trimQuote(next.text)}”。如果这个问题希望学生组织想法，当前等待时间偏短。`
+      : `教师提出“${trimQuote(question.text)}”后，留出了约${waitSeconds}秒再进入下一句，课堂节奏有短暂停顿。`,
+    sentiment: isShortWait ? "negative" : "neutral",
+    segments: [question, next],
+    confidence: "high",
+    uncertaintyNote: isTeacher(next) ? "下一句仍为教师发言，因此无法确认是否存在未被收录的学生回应。" : null,
+    analysis: {
+      evidenceCategory: "wait_time",
+      utteranceType: "teacher_question_wait_time",
+      includedInQuestionCount: true,
+      includedInInteractionCount: !isTeacher(next),
+      evidenceStrength: "medium",
+      internalReason: `等待时间由相邻句子的数据库时间确定性计算得出：${waitMs}ms。`
+    },
+    teacherView: {
+      title: isShortWait ? "提问后等待时间偏短" : "提问后有短暂停顿",
+      observation: `教师提出“${trimQuote(question.text)}”后，约${waitSeconds}秒进入下一句。`,
+      teachingMeaning: isShortWait
+        ? "这个证据来自时间轴计算，适合由教师确认当时是否原本期待学生回答。"
+        : "这个片段显示教师在问题后留下了可观察的短暂停顿。"
     }
   });
 }
@@ -245,7 +289,7 @@ export function buildVariationPracticeCard(input: TeachingEvidenceInput, segment
 }
 
 export function buildSelfCheckCard(input: TeachingEvidenceInput, segments: TranscriptSegment[]): TeachingEvidenceCard | null {
-  if (input.lesson_format !== "recorded_online_class") return null;
+  if (input.lesson_format !== "recorded_online_class" && !isTeacherCertificationInterview(input.lesson_format)) return null;
   const segment = segments.find((item) => matchesAny(item.text, [/暂停/, /自己想一想/, /先试着/, /自测/, /检查一下/, /请你完成/]));
   if (!segment) return null;
   return evidenceCard(input, {

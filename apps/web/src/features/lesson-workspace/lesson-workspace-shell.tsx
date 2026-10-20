@@ -325,8 +325,7 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
       await patchJson(`/api/lessons/${activeLessonId}/evidence/${card.id}/review`, {
         status,
         finalFact: card.fact,
-        finalJudgment: card.interpretation,
-        finalSuggestion: card.suggestion
+        finalJudgment: card.interpretation
       });
       setEvidenceCards((cards) => cards.filter((item) => item.id !== card.id));
       const result = await getJson<{ evidenceCards: EvidenceCardItem[] }>(`/api/lessons/${activeLessonId}/evidence`);
@@ -949,8 +948,6 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
                 </div>
                 <p>{card.teacherView?.observation || card.fact || card.quote}</p>
                 {card.teacherView?.teachingMeaning ? <small>{card.teacherView.teachingMeaning}</small> : null}
-                {card.teacherView?.nextStep ? <em>{card.teacherView.nextStep}</em> : null}
-                {card.teacherView?.exampleWording ? <small>示例：{card.teacherView.exampleWording}</small> : null}
                 {card.quote && card.quote !== card.fact ? <small>原文：{card.quote}</small> : null}
                 <div className="evidence-actions">
                   <button className="ghost-button compact-button" onClick={() => jumpToEvidence(card)} type="button">跳到视频</button>
