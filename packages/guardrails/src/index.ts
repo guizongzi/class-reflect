@@ -1,3 +1,4 @@
+import { buildEvaluationContext, isEvaluationCategoryAllowed, type EvaluationContext } from "@class-reflect/shared-types";
 import type { ClassroomEvent, ClassroomMetric, LessonFormat, TeachingEvidenceCard, TranscriptSegment } from "@class-reflect/shared-types";
 
 export function assertEvidenceHasSource(evidence: { sources?: unknown[] }) {
@@ -10,11 +11,14 @@ export function assertEvidenceHasSource(evidence: { sources?: unknown[] }) {
 export function validateTeachingEvidenceCard(input: {
   lesson_format: LessonFormat;
   card: TeachingEvidenceCard;
+  evaluationContext?: EvaluationContext;
   transcriptSegments?: TranscriptSegment[];
   metrics?: ClassroomMetric[];
   classroomEvents?: ClassroomEvent[];
 }): { valid: true } | { valid: false; reason: string } {
   const { lesson_format } = input;
+  const scene = input.evaluationContext || buildEvaluationContext(lesson_format,input.transcriptSegments||[]);
+  if (!isEvaluationCategoryAllowed(scene,input.card.category)) return {valid:false,reason:"not_applicable_to_evaluation_scene"};
   const card = input.transcriptSegments
     ? resolveTeachingEvidenceCardTiming(input.card, input.transcriptSegments)
     : input.card;

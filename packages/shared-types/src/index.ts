@@ -263,6 +263,7 @@ export type Report = {
 };
 
 export type TeachingEvidenceCard = {
+  evaluationContext?: import("./evaluation-scene").EvaluationContext;
   id: string;
   category: EvidenceCategory;
   sentiment?: "positive" | "neutral" | "negative";
@@ -361,3 +362,9 @@ export type ReviewStatus =
   | "edited_and_accepted"
   | "rejected"
   | "needs_more_context";
+
+export { canonicalLessonFormat, buildEvaluationContext, isEvaluationCategoryAllowed, interactionEvidenceCategories, isInteractionMetric, evaluationSceneLabel, evaluationSceneNotice, isEvaluationContextCurrent } from './evaluation-scene';
+export type { EvaluationContext, EvaluationScope, EvaluationScene } from './evaluation-scene';
+export { summarizeSceneMetricGuard } from './evaluation-scene';
+
+export {filterSceneMetrics, checkSceneMetric, sceneMetricId, allowedSceneIds} from './scene-metric-policy';

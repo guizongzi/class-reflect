@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runTeachingEvidenceAgent } from "./run";
 
-test("teaching evidence agent generates deterministic wait-time evidence without LLM", async () => {
+test("teacher-only recording flags missing interaction observations instead of judging wait time", async () => {
   const previousBaseUrl = process.env.LLM_BASE_URL;
   const previousApiKey = process.env.LLM_API_KEY;
   const previousModel = process.env.LLM_MODEL;
@@ -43,10 +43,9 @@ test("teaching evidence agent generates deterministic wait-time evidence without
     });
 
     const waitCard = result.output.evidenceCards.find((card) => card.category === "wait_time");
-    assert.ok(waitCard);
-    assert.deepEqual(waitCard.transcriptSegmentIds, ["sent-q", "sent-a"]);
-    assert.equal(waitCard.startMs, 1000);
-    assert.equal(waitCard.endMs, 4200);
+    assert.equal(waitCard,undefined);
+    assert.equal(result.output.evaluationContext?.requiresReview,true);
+    assert.equal(result.output.evaluationContext?.sceneType,'real_classroom');
   } finally {
     restoreEnv("LLM_BASE_URL", previousBaseUrl);
     restoreEnv("LLM_API_KEY", previousApiKey);
@@ -70,9 +69,9 @@ test("teaching evidence agent filters LLM cards by allowed polarity, supported c
           lesson_format: "recorded_online_class",
           instructionalContext: "unknown",
           evidenceCards: [
-            llmCard("card-1", "question_quality", "negative", ["s0"], "自学问题目标模糊"),
+            llmCard("card-1", "explanation_quality", "negative", ["s0"], "自学问题目标模糊"),
             llmCard("card-2", "feedback_quality", "negative", ["s1"], "录播课不应生成实时反馈负证据"),
-            llmCard("card-3", "question_quality", "negative", ["s0"], "重复的自学问题目标模糊"),
+            llmCard("card-3", "explanation_quality", "negative", ["s0"], "重复的自学问题目标模糊"),
             llmCard("card-4", "self_check", "negative", ["s2"], "自测任务缺少标准")
           ]
         })
@@ -115,7 +114,7 @@ test("teaching evidence agent filters LLM cards by allowed polarity, supported c
       classroomEvents: [],
       generationConfig: {
         language: "zh-CN",
-        enabledCategories: ["question_quality", "feedback_quality", "lesson_structure"],
+        enabledCategories: ["explanation_quality", "feedback_quality", "lesson_structure"],
         maxEvidenceCards: 6,
         minimumConfidence: "low"
       }
@@ -144,7 +143,7 @@ test("teaching evidence agent keeps same-category cards when they point to diffe
       message: {
         content: JSON.stringify({
           lessonId: "lesson-same-category",
-          lesson_format: "teacher_certification_interview",
+          lesson_format: "offline_classroom_recording",
           instructionalContext: "unknown",
           evidenceCards: [
             llmCard("card-q1", "question_quality", "negative", ["s0"], "第一处低阶提问"),
@@ -160,7 +159,7 @@ test("teaching evidence agent keeps same-category cards when they point to diffe
   try {
     const result = await runTeachingEvidenceAgent({
       lessonId: "lesson-same-category",
-      lesson_format: "teacher_certification_interview",
+      lesson_format: "offline_classroom_recording",
       transcriptSegments: [
         {
           id: "sent-1",
@@ -174,8 +173,8 @@ test("teaching evidence agent keeps same-category cards when they point to diffe
           id: "sent-2",
           startMs: 3000,
           endMs: 4000,
-          speakerLabel: "教师",
-          text: "我们继续看例题。",
+          speakerLabel: "学生",
+          text: "这两个量相等。",
           confidence: 0.92
         },
         {

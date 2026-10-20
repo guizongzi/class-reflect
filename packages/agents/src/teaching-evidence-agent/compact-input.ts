@@ -1,3 +1,4 @@
+import { filterSceneMetrics, buildEvaluationContext, isEvaluationCategoryAllowed, interactionEvidenceCategories, type EvaluationContext } from "@class-reflect/shared-types";
 import { type ClassroomEvent, type ClassroomMetric, type EvidenceCategory, type TranscriptDeliveryFeatures, type TranscriptSegment } from "@class-reflect/shared-types";
 import { buildTeachingEvidenceOutputInstruction } from "./prompt";
 import { evidenceProfileByLessonFormat, semanticEvidenceCategoriesForLlm } from "./profiles";
@@ -12,6 +13,9 @@ type CompactDeliveryFeatures = [id: string, tags: DeliveryFeatureTag[]];
 
 export type TeachingEvidenceCompactPayload = {
   instruction: string;
+  scene_type: EvaluationContext["sceneType"];
+  evaluation_scope: EvaluationContext["evaluationScope"];
+  scene_cross_check: EvaluationContext;
   lessonId: string;
   lesson_format: TeachingEvidenceInput["lesson_format"];
   ap: {
@@ -33,19 +37,21 @@ export type TeachingEvidenceCompactPayload = {
 
 export function buildTeachingEvidenceLlmPayload(input: TeachingEvidenceInput): TeachingEvidenceCompactPayload {
   const profile = evidenceProfileByLessonFormat[input.lesson_format];
+  const scene = buildEvaluationContext(input.sceneLabelConfirmed === false ? null : input.lesson_format,input.transcriptSegments,input.sceneRevision);
   const maxEvidenceCards = resolveMaxEvidenceCards(input);
   const enabledCategories = input.generationConfig?.enabledCategories
     ? semanticEvidenceCategoriesForLlm(input.generationConfig.enabledCategories)
     : semanticEvidenceCategoriesForLlm(profile.priorityCategories);
-  const enabledSet = new Set(enabledCategories);
+  const enabledSet = new Set(enabledCategories.filter(c=>isEvaluationCategoryAllowed(scene,c)));
   const sentenceIdMap = buildSentenceIdMap(input.transcriptSegments);
   return {
     instruction: buildTeachingEvidenceOutputInstruction(input.lesson_format),
+    scene_type: scene.sceneType, evaluation_scope: scene.evaluationScope, scene_cross_check: scene,
     lessonId: input.lessonId,
     lesson_format: input.lesson_format,
     ap: {
       p: profile.priorityCategories.filter((category) => enabledSet.has(category)),
-      x: profile.disabledCategories,
+      x: [...new Set([...profile.disabledCategories,...(scene.interactionEnabled?[]:interactionEvidenceCategories)])],
       pos: profile.positiveCategories.filter((category) => enabledSet.has(category)),
       neg: profile.negativeCategories.filter((category) => enabledSet.has(category)),
       mp: resolveSentimentLimit(profile.maxPositiveCards, maxEvidenceCards, 0.4),
@@ -54,13 +60,13 @@ export function buildTeachingEvidenceLlmPayload(input: TeachingEvidenceInput): T
     sp: { T: "teacher", S: "student", G: "students", M: "multiple", U: "unknown" },
     t: input.transcriptSegments.map((segment) => compactTranscriptSegment(segment, sentenceIdMap)),
     f: input.transcriptSegments.flatMap((segment) => compactDeliveryFeatures(segment, sentenceIdMap)),
-    m: input.metrics.map(compactMetric),
-    e: (input.classroomEvents || []).map((event) => compactClassroomEvent(event, sentenceIdMap)),
+    m: filterSceneMetrics(scene,input.metrics).map(compactMetric),
+    e: (scene.interactionEnabled ? input.classroomEvents || [] : []).map((event) => compactClassroomEvent(event, sentenceIdMap)),
     raw: selectRawExcerpts(input.transcriptSegments, input.classroomEvents || [], sentenceIdMap),
     generationConfig: {
       ...(input.generationConfig || { language: "zh-CN" }),
       maxEvidenceCards,
-      enabledCategories
+      enabledCategories: enabledCategories.filter(c=>enabledSet.has(c))
     }
   };
 }

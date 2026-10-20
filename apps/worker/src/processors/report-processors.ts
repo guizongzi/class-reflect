@@ -1,12 +1,13 @@
 import {
   getLessonRecord,
+  getTeachingEvidenceSource,
   listClassroomMetrics,
   listTeachingEvidenceCards,
   saveReportRecord,
   updateWorkflowRunStatus
 } from "@class-reflect/database";
 import { buildReportFromAcceptedEvidence } from "@class-reflect/domain";
-import type { LessonFormat } from "@class-reflect/shared-types";
+import { buildEvaluationContext, type LessonFormat } from "@class-reflect/shared-types";
 import type { ProcessorResult, WorkflowProcessor } from "./types";
 
 export const waitHumanReviewProcessor: WorkflowProcessor = {
@@ -25,7 +26,10 @@ export const generateReportProcessor: WorkflowProcessor = {
     if (!detail) throw new Error(`课堂记录不存在：${context.workflow.lessonId}`);
     const evidenceCards = await listTeachingEvidenceCards(context.workflow.lessonId);
     const metrics = await listClassroomMetrics({ lessonId: context.workflow.lessonId });
+    const source=await getTeachingEvidenceSource({lessonId:context.workflow.lessonId,videoId:context.workflow.videoId});
+    const scene=buildEvaluationContext(source?.lesson.sceneLabelConfirmed?source.lesson.lessonFormat:null,source?.transcriptSegments||[],source?.lesson.sceneRevision||detail.lesson.sceneRevision);
     const report = buildReportFromAcceptedEvidence({
+      evaluationContext:scene,
       lesson: {
         id: detail.lesson.id,
         lessonTitle: detail.lesson.lessonTitle,

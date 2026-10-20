@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createLessonDraft, type Lesson } from "@class-reflect/domain";
 import {
   createLessonRecord,
+  listSceneReviewRecords,
   createLessonVideoRecord,
   deleteLessonRecord,
   getLessonRecord,
@@ -90,10 +91,16 @@ export class LessonsService {
   async updateLesson(lessonId: string, request: UpdateLessonRequest) {
     const lesson = await updateLessonRecord({
       lessonId,
-      lessonFormat: request.lessonFormat || request.lesson_format
+      lessonFormat: request.lessonFormat || request.lesson_format,
+      reviewComment: request.reviewComment
     });
     if (!lesson) throw new NotFoundException("lesson not found");
     return { lesson };
+  }
+
+  async listSceneReviews(lessonId:string) {
+    if(!await getLessonRecord(lessonId))throw new NotFoundException("lesson not found");
+    return {labels:await listSceneReviewRecords(lessonId),status:"manual_corrections_pending_validation",classifierTrained:false};
   }
 
   async deleteLesson(lessonId: string) {

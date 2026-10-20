@@ -1,11 +1,13 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import type { ReviewEvidenceRequest } from "@class-reflect/api-contracts";
-import { listTeachingEvidenceCards, reviewEvidenceCardRecord } from "@class-reflect/database";
+import { getLessonRecord, listTeachingEvidenceCards, reviewEvidenceCardRecord } from "@class-reflect/database";
 
 @Injectable()
 export class EvidenceService {
   async listEvidence(lessonId: string) {
-    return { evidenceCards: await listTeachingEvidenceCards(lessonId) };
+    const detail=await getLessonRecord(lessonId);
+    if(!detail)throw new NotFoundException("lesson not found");
+    return {evaluationContext:detail.evaluationContext,evidenceCards:await listTeachingEvidenceCards(lessonId)};
   }
 
   async reviewEvidence(lessonId: string, evidenceId: string, input: ReviewEvidenceRequest) {

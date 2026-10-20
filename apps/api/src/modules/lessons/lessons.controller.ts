@@ -26,6 +26,11 @@ export class LessonsController {
     return this.lessons.updateLesson(lessonId, UpdateLessonRequestSchema.parse(body));
   }
 
+  @Get(":lessonId/scene-reviews")
+  async sceneReviews(@Param("lessonId") lessonId:string) {
+    return this.lessons.listSceneReviews(lessonId);
+  }
+
   @Delete(":lessonId")
   async deleteLesson(@Param("lessonId") lessonId: string) {
     return this.lessons.deleteLesson(lessonId);

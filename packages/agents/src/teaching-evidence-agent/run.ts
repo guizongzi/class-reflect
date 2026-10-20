@@ -1,3 +1,4 @@
+import { buildEvaluationContext, isEvaluationCategoryAllowed, summarizeSceneMetricGuard, evaluationSceneNotice } from "@class-reflect/shared-types";
 import { capabilityMatrixByLessonFormat, type CapabilityMatrix, type EvidenceCategory, type TeachingEvidenceCard } from "@class-reflect/shared-types";
 import type { TranscriptSegment } from "@class-reflect/shared-types";
 import { tryRunLlmAgent } from "../llm";
@@ -21,6 +22,7 @@ import { buildSentenceIdMap, restoreMappedSentenceIds } from "../sentence-id-map
 export async function runTeachingEvidenceAgent(
   input: TeachingEvidenceInput
 ): Promise<AgentResult<TeachingEvidenceOutput>> {
+  const scene = buildEvaluationContext(input.sceneLabelConfirmed === false ? null : input.lesson_format,input.transcriptSegments,input.sceneRevision);
   const capabilityMatrix =
     input.capabilityMatrix ||
     capabilityMatrixByLessonFormat[input.lesson_format];
@@ -28,6 +30,7 @@ export async function runTeachingEvidenceAgent(
   const enabledCategories =
     input.generationConfig?.enabledCategories ||
     defaultCategoriesForLessonFormat(input.lesson_format);
+  const sceneEnabledCategories = enabledCategories.filter(c=>isEvaluationCategoryAllowed(scene,c));
   const profile = evidenceProfileByLessonFormat[input.lesson_format];
 
   const maxEvidenceCards = resolveMaxEvidenceCards(input);
@@ -54,7 +57,7 @@ export async function runTeachingEvidenceAgent(
         category,
         reason: "not_applicable_to_lesson_format"
       });
-    } else if (!enabledCategories.includes(category)) {
+    } else if (!sceneEnabledCategories.includes(category)) {
       skippedCategories.push({
         category,
         reason: "category_disabled"
@@ -62,7 +65,7 @@ export async function runTeachingEvidenceAgent(
     }
   }
 
-  for (const category of enabledCategories) {
+  for (const category of sceneEnabledCategories) {
     if (
       !isCategorySupported(
         category,
@@ -88,14 +91,14 @@ export async function runTeachingEvidenceAgent(
     }
 
     if (
-      enabledCategories.includes(card.category) &&
+      sceneEnabledCategories.includes(card.category) &&
       isCategorySupported(
         card.category,
         input.lesson_format,
         capabilityMatrix
       )
     ) {
-      cards.push(card);
+      cards.push({...card,evaluationContext:scene});
     }
   };
 
@@ -106,7 +109,7 @@ export async function runTeachingEvidenceAgent(
   pushCard(buildTechnicalIssueCard(input, sortedSegments));
   pushCard(buildSelfCheckCard(input, sortedSegments));
 
-  const semanticEnabledCategories = semanticEvidenceCategoriesForLlm(enabledCategories)
+  const semanticEnabledCategories = semanticEvidenceCategoriesForLlm(sceneEnabledCategories)
     .filter((category) => isCategorySupported(category, input.lesson_format, capabilityMatrix));
   const llmOutput = semanticEnabledCategories.length
     ? await tryRunLlmAgent<TeachingEvidenceOutput>({
@@ -156,6 +159,8 @@ export async function runTeachingEvidenceAgent(
 
   return {
     output: {
+      sceneMetricGuard:summarizeSceneMetricGuard(scene,llmOutput?.evidenceCards.map(c=>c.category)||[],cards.map(c=>c.category)),
+      evaluationContext: scene,
       lessonId: input.lessonId,
       lesson_format: input.lesson_format,
       instructionalContext,
@@ -169,7 +174,7 @@ export async function runTeachingEvidenceAgent(
       }
     },
     promptVersion: llmOutput ? "teaching-evidence.hybrid.v1" : "teaching-evidence.rule-based.v0.2",
-    warnings: llmOutput ? [] : [
+    warnings: llmOutput ? (scene.requiresReview ? [evaluationSceneNotice(scene), ...scene.reviewReasons] : []) : [
       "LLM 未返回有效结果，已使用规则证据生成器"
     ]
   };

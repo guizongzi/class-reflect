@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { lessonFormatOptions, type LessonFormat } from "@class-reflect/shared-types";
+import { lessonFormatOptions, evaluationSceneLabel, evaluationSceneNotice, isEvaluationContextCurrent, type EvaluationContext, type LessonFormat } from "@class-reflect/shared-types";
 
 type Props = {
   lessonId?: string;
@@ -61,6 +61,7 @@ type LessonVideoItem = {
 };
 
 type LessonDetailResponse = {
+  evaluationContext?: EvaluationContext;
   lesson?: {
     lessonFormat?: LessonFormat | null;
   };
@@ -80,6 +81,7 @@ type TranslateResponse = {
 };
 
 type EvidenceCardItem = {
+  evaluationContext?: EvaluationContext;
   id: string;
   category?: string;
   sentiment?: "positive" | "neutral" | "negative";
@@ -127,6 +129,7 @@ const workflowStageStepGroups: Record<number, string[]> = {
 
 export function LessonWorkspaceShell({ lessonId }: Props) {
   const [activeLessonId, setActiveLessonId] = useState(lessonId || "");
+  const [evaluationContext,setEvaluationContext]=useState<EvaluationContext|null>(null);
   const [lessonFormat, setLessonFormat] = useState<LessonFormat | "">("");
   const [savedLessonFormat, setSavedLessonFormat] = useState<LessonFormat | "">("");
   const [savingLessonFormat, setSavingLessonFormat] = useState(false);
@@ -209,7 +212,8 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
           setLessonTexts(textItems);
           setEditingTextById(Object.fromEntries(flattenLessonTextItems(textItems).map((item) => [item.id, item.originalText])));
           setEditingSpeakerById(Object.fromEntries(flattenLessonTextItems(textItems).map((item) => [item.id, speakerRoleValue(item.speakerLabel)])));
-          setEvidenceCards(normalizeEvidenceCards(detail.evidenceCards));
+          setEvaluationContext(detail.evaluationContext||null);
+          setEvidenceCards(normalizeEvidenceCards(detail.evidenceCards,detail.evaluationContext));
           const loadedReports = normalizeReports(detail.reports);
           setReports(loadedReports);
           setReportDraft(loadedReports[0]?.markdownContent || "");
@@ -328,8 +332,9 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
         finalJudgment: card.interpretation
       });
       setEvidenceCards((cards) => cards.filter((item) => item.id !== card.id));
-      const result = await getJson<{ evidenceCards: EvidenceCardItem[] }>(`/api/lessons/${activeLessonId}/evidence`);
-      setEvidenceCards(normalizeEvidenceCards(result.evidenceCards || []));
+      const result = await getJson<{ evidenceCards: EvidenceCardItem[];evaluationContext?:EvaluationContext }>(`/api/lessons/${activeLessonId}/evidence`);
+      setEvaluationContext(result.evaluationContext||null);
+      setEvidenceCards(normalizeEvidenceCards(result.evidenceCards || [],result.evaluationContext));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "证据复核失败");
     } finally {
@@ -548,7 +553,8 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
         : lessonFormat;
       setLessonFormat(nextFormat);
       setSavedLessonFormat(nextFormat);
-      setStatusMessage("课堂类型已更新。后续重跑证据会按新的课堂类型分析。");
+      setEvidenceCards([]);setReports([]);setReportDraft("");setEvaluationContext(null);
+      setStatusMessage("课堂场景已更新，旧证据与旧报告已隔离。请重新生成当前场景的分析。");
       setDetailRefreshNonce((value) => value + 1);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "课堂类型保存失败");
@@ -936,9 +942,10 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
         </section>
         <section className="assistant-card muted">
           <div className="assistant-card-title">
-            <strong>证据审核</strong>
+            <strong>证据审核 · {evaluationContext?.evaluationScope==="real_interaction"?"真实互动":"教学呈现"}</strong>
             <span>{pendingEvidenceCards.length ? `${pendingEvidenceCards.length} 张待处理` : "已处理完"}</span>
           </div>
+          {evaluationContext ? <div role="status"><strong>{evaluationSceneLabel(evaluationContext)}</strong><p>{evaluationSceneNotice(evaluationContext)}</p>{evaluationContext.requiresReview?<small>素材特征与所选场景需要人工核对，请检查课堂类型及说话人标签。</small>:null}</div>:<p>场景尚未确认，请先选择课堂类型并生成当前场景的证据。</p>}
           <div className="evidence-list">
             {pendingEvidenceCards.length ? pendingEvidenceCards.map((card) => (
               <article className="evidence-card" key={card.id}>
@@ -1306,7 +1313,7 @@ function trimSectionKeyword(value: string) {
     .slice(0, 16);
 }
 
-function normalizeEvidenceCards(value: unknown): EvidenceCardItem[] {
+function normalizeEvidenceCards(value: unknown,scene?:EvaluationContext): EvidenceCardItem[] {
   const rows = Array.isArray(value) ? value : [];
   return rows.map((row) => {
     const item = row as Record<string, unknown>;
@@ -1319,6 +1326,7 @@ function normalizeEvidenceCards(value: unknown): EvidenceCardItem[] {
     const category = stringValue(item.category ?? raw.category ?? item.evidence_type);
     return {
       id: stringValue(item.id ?? raw.id),
+      evaluationContext:(item.evaluationContext||raw.evaluationContext) as EvaluationContext|undefined,
       category,
       sentiment: normalizeEvidenceSentiment(item.sentiment ?? raw.sentiment, category),
       title: stringValue(teacherView?.title ?? item.title ?? raw.title ?? category),
@@ -1333,7 +1341,7 @@ function normalizeEvidenceCards(value: unknown): EvidenceCardItem[] {
       reviewStatus: stringValue(item.reviewStatus ?? item.review_status ?? raw.reviewStatus),
       uncertaintyNote: nullableString(item.uncertaintyNote ?? raw.uncertaintyNote)
     };
-  }).filter((item) => item.id && isPendingEvidenceCard(item));
+  }).filter((item) => item.id && isPendingEvidenceCard(item) && Boolean(scene && isEvaluationContextCurrent(item.evaluationContext,scene.sourceFormat,scene.sceneRevision)));
 }
 
 function normalizeEvidenceSentiment(value: unknown, category: string): EvidenceCardItem["sentiment"] {

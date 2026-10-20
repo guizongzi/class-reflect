@@ -1,3 +1,4 @@
+import {checkSceneMetric, sceneMetricId, type EvaluationContext} from '@class-reflect/shared-types';
 import type { ClassroomMetric, LessonSection, TranscriptSegment } from "@class-reflect/shared-types";
 
 type MetricInput = {
@@ -18,7 +19,7 @@ export function calculateSpeechRate(segments: Array<{ startMs?: number; endMs?: 
   return { value: round(totalChars / minutes), unit: "chars_per_minute" };
 }
 
-export function calculateDeterministicClassroomMetrics(input: MetricInput): ClassroomMetric[] {
+function metricJobs(input: MetricInput): Array<{name:string;calculate:()=>MetricDraft}> {
   const segments = [...input.transcriptSegments].sort((a, b) => a.startMs - b.startMs);
   const teacherSegments = segments.filter(isTeacherSegment);
   const studentSegments = segments.filter(isStudentSegment);
@@ -28,16 +29,16 @@ export function calculateDeterministicClassroomMetrics(input: MetricInput): Clas
   const feedback = classifyFeedback(teacherSegments);
   const languageSignals = detectLanguageSignals(teacherSegments);
   const densitySignals = detectInformationDensitySignals(teacherSegments);
-  const metrics: MetricDraft[] = [
-    buildMetric("speech_rate", "语速", calculateSpeechRate(teacherSegments), teacherSegments.map((segment) => segment.id)),
-    {
+  return [
+{name:'语速',calculate:()=>(buildMetric("speech_rate", "语速", calculateSpeechRate(teacherSegments), teacherSegments.map((segment) => segment.id)))},
+{name:'教师最长连续讲授时长',calculate:()=>({
       name: "教师最长连续讲授时长",
       value: round(findLongestTeacherRunMs(teacherSegments) / 1000),
       unit: "seconds",
       segmentIds: teacherSegments.map((segment) => segment.id),
       metadata: { thresholdGapMs: teacherRunGapMs }
-    },
-    {
+    })},
+{name:'长停顿次数',calculate:()=>({
       name: "长停顿次数",
       value: longPauses.length,
       unit: "count",
@@ -47,15 +48,15 @@ export function calculateDeterministicClassroomMetrics(input: MetricInput): Clas
         maxPauseSeconds: round(Math.max(...longPauses.map((pause) => pause.durationMs), 0) / 1000),
         samples: longPauses.slice(0, 5)
       }
-    },
-    {
+    })},
+{name:'教师问题数量',calculate:()=>({
       name: "教师问题数量",
       value: questions.length,
       unit: "count",
       segmentIds: questions.map((segment) => segment.id),
       metadata: { samples: questions.slice(0, 5).map((segment) => segment.text) }
-    },
-    {
+    })},
+{name:'问题后平均等待时间',calculate:()=>({
       name: "问题后平均等待时间",
       value: round(average(waitTimes) / 1000),
       unit: "seconds",
@@ -64,8 +65,8 @@ export function calculateDeterministicClassroomMetrics(input: MetricInput): Clas
         measuredQuestionCount: waitTimes.length,
         maxWaitSeconds: round(Math.max(...waitTimes, 0) / 1000)
       }
-    },
-    {
+    })},
+{name:'学生回答或齐答次数',calculate:()=>({
       name: "学生回答或齐答次数",
       value: studentSegments.length,
       unit: "count",
@@ -74,15 +75,15 @@ export function calculateDeterministicClassroomMetrics(input: MetricInput): Clas
         choralResponseCount: studentSegments.filter((segment) => /齐答|一起|全班|大家|同学们/.test(segment.speakerLabel || segment.text)).length,
         samples: studentSegments.slice(0, 5).map((segment) => segment.text)
       }
-    },
-    {
+    })},
+{name:'教师正向反馈次数',calculate:()=>({
       name: "教师正向反馈次数",
       value: feedback.positive.length,
       unit: "count",
       segmentIds: feedback.positive.map((segment) => segment.id),
       metadata: { samples: feedback.positive.slice(0, 5).map((segment) => segment.text) }
-    },
-    {
+    })},
+{name:'教师纠错或追问反馈次数',calculate:()=>({
       name: "教师纠错或追问反馈次数",
       value: feedback.corrective.length + feedback.prompting.length,
       unit: "count",
@@ -92,42 +93,54 @@ export function calculateDeterministicClassroomMetrics(input: MetricInput): Clas
         promptingCount: feedback.prompting.length,
         samples: [...feedback.corrective, ...feedback.prompting].slice(0, 5).map((segment) => segment.text)
       }
-    },
-    {
+    })},
+{name:'填充词次数',calculate:()=>({
       name: "填充词次数",
       value: languageSignals.fillerCount,
       unit: "count",
       segmentIds: languageSignals.segmentIds,
       metadata: { samples: languageSignals.samples }
-    },
-    {
+    })},
+{name:'笼统理解检查次数',calculate:()=>({
       name: "笼统理解检查次数",
       value: languageSignals.broadCheckCount,
       unit: "count",
       segmentIds: languageSignals.segmentIds,
       metadata: { samples: languageSignals.samples }
-    },
-    {
+    })},
+{name:'模糊指代次数',calculate:()=>({
       name: "模糊指代次数",
       value: languageSignals.vagueReferenceCount,
       unit: "count",
       segmentIds: languageSignals.segmentIds,
       metadata: { samples: languageSignals.samples }
-    },
-    {
+    })},
+{name:'信息密度提示',calculate:()=>({
       name: "信息密度提示",
       value: densitySignals.length,
       unit: "count",
       segmentIds: densitySignals.map((signal) => signal.segmentId),
       metadata: { signals: densitySignals }
-    },
-    ...buildStructureMetrics(input.lessonSections || segmentsToSingleSection(segments))
+    })},
+...buildStructureMetrics(input.lessonSections || segmentsToSingleSection(segments)).map(metric=>({name:metric.name,calculate:()=>metric}))
   ];
+}
 
-  return metrics.map((metric, index) => ({
-    id: metricKey(metric.name, index),
-    ...metric
-  }));
+export function calculateDeterministicClassroomMetrics(input:MetricInput):ClassroomMetric[]{
+ return metricJobs(input).map((job,index)=>({id:metricKey(job.name,index),...job.calculate()}));
+}
+export async function calculateScopedClassroomMetrics(input:MetricInput,loadContext:()=>Promise<EvaluationContext>,onBlocked:(event:Record<string,unknown>)=>void):Promise<ClassroomMetric[]>{
+ const results:ClassroomMetric[]=[];
+ const initial=await loadContext();
+ for(const job of metricJobs(input)){
+  const current=await loadContext();
+  const candidate={id:sceneMetricId({id:'',name:job.name})||'unknown',name:job.name,value:0,metadata:{evaluationContext:initial}};
+  const decision=checkSceneMetric(current,candidate);
+  if(!decision.allowed){onBlocked({event:'scene_metric_execution_skipped',sceneRevision:current.sceneRevision,metricId:candidate.id,postChangeViolationHitCount:decision.changedContext?1:0,blockedCount:1});continue;}
+  const calculated=job.calculate();
+  results.push({...calculated,id:candidate.id,metadata:{...calculated.metadata,evaluationContext:current}});
+ }
+ return results;
 }
 
 function buildMetric(name: string, label: string, value: { value: number; unit?: string }, segmentIds: string[]): MetricDraft {

@@ -1,3 +1,4 @@
+import {filterSceneMetrics} from '@class-reflect/shared-types';
 import { buildDisplayTranscriptSections, runTeachingEvidenceAgent, runTranscriptNormalizer } from "@class-reflect/agents";
 import {
   getTeachingEvidenceSource,
@@ -12,8 +13,8 @@ import {
 } from "@class-reflect/database";
 import { detectClassroomEvents } from "@class-reflect/domain";
 import { assertEvidenceHasSource, resolveTeachingEvidenceCardTiming, validateTeachingEvidenceCard } from "@class-reflect/guardrails";
-import { calculateDeterministicClassroomMetrics } from "@class-reflect/metrics";
-import { capabilityMatrixByLessonFormat } from "@class-reflect/shared-types";
+import { calculateScopedClassroomMetrics } from "@class-reflect/metrics";
+import { buildEvaluationContext, summarizeSceneMetricGuard, capabilityMatrixByLessonFormat } from "@class-reflect/shared-types";
 import type { ProcessorResult, WorkflowProcessor } from "./types";
 
 export const normalizeTranscriptProcessor: WorkflowProcessor = {
@@ -92,14 +93,19 @@ export const calculateMetricsProcessor: WorkflowProcessor = {
         tags: Array.isArray(row.tags) ? row.tags.map(String) : []
       };
     });
-    const metrics = calculateDeterministicClassroomMetrics({
+    const loadScene=async()=>{const detail=await getLessonRecord(context.workflow.lessonId);const rows=await listTranscriptSegments({lessonId:context.workflow.lessonId,videoId:context.workflow.videoId});return buildEvaluationContext(detail?.lesson.lessonFormat,rows,detail?.lesson.sceneRevision);};
+    const metrics = await calculateScopedClassroomMetrics({
       transcriptSegments,
       lessonSections
-    });
+    },loadScene,event=>console.info(JSON.stringify({...event,workflowRunId:context.workflow.id})));
+    const scene = await loadScene();
+    if(scene.sceneRevision!==lessonDetail?.lesson.sceneRevision)throw new Error('评价过程中场景发生变化，请重新计算');
+    const scopedMetrics=filterSceneMetrics(scene,metrics,{onBlocked:event=>console.info(JSON.stringify(event))});
     const savedMetrics = await saveClassroomMetrics({
       lessonId: context.workflow.lessonId,
       videoId: context.workflow.videoId,
-      metrics
+      evaluationContext:scene,
+      metrics: scopedMetrics
     });
     return {
       output: {
@@ -148,10 +154,13 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
     }
 
     const classroomEvents = await listClassroomEvents({ lessonId: source.lesson.id, videoId: context.workflow.videoId });
+    const scene = buildEvaluationContext(source.lesson.sceneLabelConfirmed ? source.lesson.lessonFormat : null,source.transcriptSegments,source.lesson.sceneRevision);
     const result = await runTeachingEvidenceAgent({
       lessonId: source.lesson.id,
       traceId: context.traceId,
       lesson_format: source.lesson.lessonFormat,
+      sceneLabelConfirmed: source.lesson.sceneLabelConfirmed,
+      sceneRevision: source.lesson.sceneRevision,
       capabilityMatrix: capabilityMatrixByLessonFormat[source.lesson.lessonFormat],
       transcriptSegments: source.transcriptSegments,
       metrics: source.metrics,
@@ -169,20 +178,27 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
       validateTeachingEvidenceCard({
         lesson_format: source.lesson.lessonFormat,
         card,
+        evaluationContext: scene,
         transcriptSegments: source.transcriptSegments,
         metrics: source.metrics,
         classroomEvents
       }).valid
     );
+    const sceneMetricGuard=summarizeSceneMetricGuard(scene,result.output.evidenceCards.map(c=>c.category),validCards.map(c=>c.category));
+    const generationSceneGuard=result.output.sceneMetricGuard;
+    console.info(JSON.stringify({event:"scene_metric_guard",workflowRunId:context.workflow.id,scene_type:scene.sceneType,evaluation_scope:scene.evaluationScope,generation:generationSceneGuard,storage:sceneMetricGuard}));
     const savedCards = await saveTeachingEvidenceCards({
       lessonId: source.lesson.id,
       videoId: context.workflow.videoId,
       cards: validCards,
+      evaluationContext: scene,
       sourceModel: result.promptVersion
     });
 
     return {
       output: {
+        evaluationContext: scene,
+        sceneMetricGuard:{generation:generationSceneGuard,storage:sceneMetricGuard},
         promptVersion: result.promptVersion,
         instructionalContext: result.output.instructionalContext,
         generatedEvidenceCount: result.output.evidenceCards.length,

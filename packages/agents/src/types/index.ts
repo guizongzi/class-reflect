@@ -17,6 +17,8 @@ export type AgentResult<T> = {
 };
 
 export type TeachingEvidenceInput = {
+  sceneLabelConfirmed?: boolean;
+  sceneRevision?: number;
   lessonId: string;
   traceId?: string;
   lesson_format: LessonFormat;
@@ -33,6 +35,8 @@ export type TeachingEvidenceInput = {
 };
 
 export type TeachingEvidenceOutput = {
+  sceneMetricGuard?: ReturnType<typeof import("@class-reflect/shared-types").summarizeSceneMetricGuard>;
+  evaluationContext?: import("@class-reflect/shared-types").EvaluationContext;
   lessonId: string;
   lesson_format: LessonFormat;
   instructionalContext: InstructionalContext;

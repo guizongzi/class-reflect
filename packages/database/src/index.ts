@@ -1,3 +1,4 @@
+import { filterSceneMetrics, canonicalLessonFormat, buildEvaluationContext, isEvaluationContextCurrent, isEvaluationCategoryAllowed, type EvaluationContext } from "@class-reflect/shared-types";
 import { loadAppConfig } from "@class-reflect/config";
 import {
   workflowStepOptions,
@@ -99,12 +100,14 @@ export type LessonDetailRecord = {
     courseTitle: string | null;
     lessonTitle: string;
     lessonFormat: string | null;
+    sceneRevision?: number;
     grade: string | null;
     subject: string | null;
     status: string;
     createdAt: string;
     updatedAt: string;
   };
+  evaluationContext?: EvaluationContext;
   videos: LessonVideoRecord[];
   sections: unknown[];
   transcriptSegments: unknown[];
@@ -124,6 +127,8 @@ export type TeachingEvidenceSourceRecord = {
   lesson: {
     id: string;
     lessonFormat: LessonFormat;
+    sceneLabelConfirmed: boolean;
+    sceneRevision: number;
   };
   transcriptSegments: TranscriptSegment[];
   metrics: ClassroomMetric[];
@@ -297,6 +302,7 @@ export async function createLessonRecord(input: {
       course_title,
       lesson_title,
       to_jsonb(lessons)->>'lesson_format' as lesson_format,
+      coalesce((to_jsonb(lessons)->>'scene_revision')::integer,1) as scene_revision,
       grade,
       subject,
       status,
@@ -317,39 +323,27 @@ export async function createLessonRecord(input: {
   };
 }
 
-export async function updateLessonRecord(input: {
-  lessonId: string;
-  lessonFormat?: string;
-}): Promise<LessonDetailRecord["lesson"] | null> {
-  const result = await getPool().query(`
-    update lessons
-    set lesson_format = $2,
-        updated_at = now()
-    where id = $1
-    returning
-      id,
-      course_title,
-      lesson_title,
-      to_jsonb(lessons)->>'lesson_format' as lesson_format,
-      grade,
-      subject,
-      status,
-      created_at,
-      updated_at
-  `, [input.lessonId, normalizeLessonFormat(input.lessonFormat)]);
-  const row = result.rows[0];
-  if (!row) return null;
-  return {
-    id: row.id,
-    courseTitle: row.course_title,
-    lessonTitle: row.lesson_title,
-    lessonFormat: row.lesson_format,
-    grade: row.grade,
-    subject: row.subject,
-    status: row.status,
-    createdAt: toIsoString(row.created_at),
-    updatedAt: toIsoString(row.updated_at)
-  };
+export async function updateLessonRecord(input: {lessonId:string;lessonFormat?:string;reviewComment?:string}):Promise<LessonDetailRecord["lesson"]|null> {
+  const format=canonicalLessonFormat(input.lessonFormat);
+  if(!format) throw new Error("请选择有效课堂场景，不能默认按真实互动评价");
+  const client=await getPool().connect();
+  try {
+    await client.query('begin');
+    const old=(await client.query('select * from lessons where id=$1 for update',[input.lessonId])).rows[0];
+    if(!old){await client.query('rollback');return null;}
+    const changed=canonicalLessonFormat(old.lesson_format)!==format;
+    const revision=Number(old.scene_revision||1)+(changed?1:0);
+    if(changed){
+      const rows=(await client.query('select * from transcript_segments where lesson_id=$1 order by start_ms',[input.lessonId])).rows;
+      const segments=rows.map(mapTranscriptLayerRow);
+      await client.query(`insert into lesson_scene_reviews(lesson_id,previous_format,corrected_format,previous_context,corrected_context,review_comment) values($1,$2,$3,$4::jsonb,$5::jsonb,$6)`,[input.lessonId,old.lesson_format,format,JSON.stringify(buildEvaluationContext(old.lesson_format,segments,Number(old.scene_revision||1))),JSON.stringify(buildEvaluationContext(format,segments,revision)),input.reviewComment||null]);
+      await client.query(`update evidence_cards set review_status='needs_more_context',raw_json=jsonb_set(coalesce(raw_json,'{}'::jsonb),'{stale}','true'::jsonb),updated_at=now() where lesson_id=$1`,[input.lessonId]);
+      await client.query(`update reports set generated_from=jsonb_set(coalesce(generated_from,'{}'::jsonb),'{stale}','true'::jsonb) where lesson_id=$1`,[input.lessonId]);
+    }
+    const result=await client.query('update lessons set lesson_format=$2,scene_revision=$3,updated_at=now() where id=$1 returning *',[input.lessonId,format,revision]);
+    await client.query('commit');const row=result.rows[0];
+    return {id:row.id,courseTitle:row.course_title,lessonTitle:row.lesson_title,lessonFormat:row.lesson_format,sceneRevision:revision,grade:row.grade,subject:row.subject,status:row.status,createdAt:toIsoString(row.created_at),updatedAt:toIsoString(row.updated_at)};
+  } catch(e){await client.query('rollback');throw e;} finally{client.release();}
 }
 
 export async function getLessonRecord(lessonId: string): Promise<LessonDetailRecord | null> {
@@ -359,6 +353,7 @@ export async function getLessonRecord(lessonId: string): Promise<LessonDetailRec
       course_title,
       lesson_title,
       to_jsonb(lessons)->>'lesson_format' as lesson_format,
+      coalesce((to_jsonb(lessons)->>'scene_revision')::integer,1) as scene_revision,
       grade,
       subject,
       status,
@@ -378,12 +373,15 @@ export async function getLessonRecord(lessonId: string): Promise<LessonDetailRec
     getPool().query("select * from reports where lesson_id = $1 order by created_at desc", [lessonId])
   ]);
 
+  const revision=Number(lesson.scene_revision||1);
   return {
+    evaluationContext: buildEvaluationContext(lesson.lesson_format,transcriptSegments.rows.map(mapTranscriptLayerRow),revision),
     lesson: {
       id: lesson.id,
       courseTitle: lesson.course_title,
       lessonTitle: lesson.lesson_title,
       lessonFormat: lesson.lesson_format,
+      sceneRevision: Number(lesson.scene_revision||1),
       grade: lesson.grade,
       subject: lesson.subject,
       status: lesson.status,
@@ -393,8 +391,8 @@ export async function getLessonRecord(lessonId: string): Promise<LessonDetailRec
     videos,
     sections: sections.rows,
     transcriptSegments: transcriptSegments.rows,
-    evidenceCards: evidenceCards.rows,
-    reports: reports.rows
+    evidenceCards: evidenceCards.rows.filter(row=>isSceneEvidenceRowCurrent(row,lesson.lesson_format,revision)),
+    reports: reports.rows.filter(row=>isSceneReportRowCurrent(row,lesson.lesson_format,revision))
   };
 }
 
@@ -405,7 +403,8 @@ export async function getTeachingEvidenceSource(input: {
   const lessonResult = await getPool().query(`
     select
       id,
-      to_jsonb(lessons)->>'lesson_format' as lesson_format
+      to_jsonb(lessons)->>'lesson_format' as lesson_format,
+      coalesce((to_jsonb(lessons)->>'scene_revision')::integer,1) as scene_revision
     from lessons
     where id = $1
   `, [input.lessonId]);
@@ -440,7 +439,9 @@ export async function getTeachingEvidenceSource(input: {
   return {
     lesson: {
       id: String(lesson.id),
-      lessonFormat: normalizeLessonFormat(lesson.lesson_format)
+      lessonFormat: normalizeLessonFormat(lesson.lesson_format),
+      sceneLabelConfirmed: canonicalLessonFormat(lesson.lesson_format)!==null,
+      sceneRevision: Number(lesson.scene_revision||1)
     },
     transcriptSegments: segmentResult.rows.map(mapTranscriptLayerRow),
     metrics
@@ -455,6 +456,9 @@ export async function saveTranscriptSegments(input: {
   const client = await getPool().connect();
   try {
     await client.query("begin");
+    await client.query('select id from lessons where id=$1 for update',[input.lessonId]);
+    await client.query('update lessons set scene_revision=scene_revision+1 where id=$1',[input.lessonId]);
+    await client.query(`update reports set generated_from=jsonb_set(coalesce(generated_from,'{}'::jsonb),'{stale}','true'::jsonb) where lesson_id=$1`,[input.lessonId]);
     await client.query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from classroom_events where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     await client.query("delete from classroom_metrics where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
@@ -553,6 +557,13 @@ export async function listTranscriptSegments(input: {
   return result.rows.map(mapTranscriptLayerRow);
 }
 
+async function invalidateSceneAfterRoleChange(client:Queryable,lessonId:string):Promise<void>{
+  await client.query('update lessons set scene_revision=scene_revision+1,updated_at=now() where id=$1',[lessonId]);
+  await client.query(`update evidence_cards set review_status='needs_more_context',raw_json=jsonb_set(coalesce(raw_json,'{}'::jsonb),'{stale}','true'::jsonb),updated_at=now() where lesson_id=$1`,[lessonId]);
+  await client.query(`update reports set generated_from=jsonb_set(coalesce(generated_from,'{}'::jsonb),'{stale}','true'::jsonb) where lesson_id=$1`,[lessonId]);
+  console.info(JSON.stringify({event:'scene_context_changed',lessonId,reason:'effective_role_changed',metricSetReloadRequired:true}));
+}
+
 export async function updateTranscriptSegmentsProjection(input: {
   lessonId: string;
   videoId: string;
@@ -561,7 +572,16 @@ export async function updateTranscriptSegmentsProjection(input: {
   const client = await getPool().connect();
   try {
     await client.query("begin");
+    await client.query('select id from lessons where id=$1 for update',[input.lessonId]);
+    const prior=(await client.query('select * from transcript_segments where lesson_id=$1 and video_id=$2 for update',[input.lessonId,input.videoId])).rows;
+    let rolesChanged=false;
     for (const segment of input.segments) {
+      const before=prior.find(row=>String(row.id)===segment.id);
+      if(before){
+        const oldRole=computeEffectiveSpeaker({speakerLabel:String(before.speaker_label||''),agentSpeakerRole:before.agent_speaker_role as any,teacherSpeakerRole:before.teacher_speaker_role as any}).speakerRole;
+        const newRole=computeEffectiveSpeaker({speakerLabel:String(before.speaker_label||''),agentSpeakerRole:inferRepositorySpeakerRole(segment.speakerLabel),teacherSpeakerRole:before.teacher_speaker_role as any}).speakerRole;
+        rolesChanged ||= oldRole!==newRole;
+      }
       await client.query(`
         update transcript_segments
         set
@@ -589,6 +609,7 @@ export async function updateTranscriptSegmentsProjection(input: {
       ]);
     }
     await client.query("update lessons set updated_at = now() where id = $1", [input.lessonId]);
+    if(rolesChanged)await invalidateSceneAfterRoleChange(client,input.lessonId);
     await client.query("commit");
     return listTranscriptSegments({ lessonId: input.lessonId, videoId: input.videoId });
   } catch (error) {
@@ -677,6 +698,9 @@ export async function updateTranscriptSegmentText(input: {
   const client = await getPool().connect();
   try {
     await client.query("begin");
+    await client.query('select id from lessons where id=$1 for update',[input.lessonId]);
+    const before=(await client.query('select * from transcript_segments where lesson_id=$1 and id=$2 for update',[input.lessonId,input.segmentId])).rows[0];
+    const previousRole=before?computeEffectiveSpeaker({speakerLabel:String(before.speaker_label||''),agentSpeakerRole:before.agent_speaker_role as any,teacherSpeakerRole:before.teacher_speaker_role as any}).speakerRole:null;
     const result = await client.query(`
     update transcript_segments
     set
@@ -714,6 +738,7 @@ export async function updateTranscriptSegmentText(input: {
       input.speakerRole || null,
       input.speakerIdentityId || null
     ]);
+    if(result.rows[0] && input.speakerRole && input.speakerRole!==previousRole)await invalidateSceneAfterRoleChange(client,input.lessonId);
     if (await tableHasColumn("evidence_cards", "transcript_segment_ids", client)) {
       await client.query(`
         update evidence_cards
@@ -795,13 +820,17 @@ export async function saveClassroomMetrics(input: {
   lessonId: string;
   videoId: string;
   metrics: ClassroomMetric[];
+  evaluationContext: EvaluationContext;
 }): Promise<ClassroomMetric[]> {
   const client = await getPool().connect();
   try {
     await client.query("begin");
+    const header=(await client.query('select * from lessons where id=$1 for update',[input.lessonId])).rows[0];
+    if(!header || !isEvaluationContextCurrent(input.evaluationContext,header.lesson_format,Number(header.scene_revision||1)))throw new Error('指标场景已变更，请重新计算');
+    const permitted=filterSceneMetrics(input.evaluationContext,input.metrics,{onBlocked:event=>console.info(JSON.stringify(event))});
     await client.query("delete from classroom_metrics where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
     const saved: ClassroomMetric[] = [];
-    for (const metric of input.metrics) {
+    for (const metric of permitted) {
       const result = await client.query(`
         insert into classroom_metrics
           (lesson_id, video_id, metric_key, name, value, unit, segment_ids, metadata)
@@ -841,7 +870,11 @@ export async function listClassroomMetrics(input: {
       ${input.videoId ? "and video_id = $2" : ""}
     order by metric_key, created_at
   `, params);
-  return result.rows.map(mapClassroomMetricRow);
+  const header=await getSceneHeader(input.lessonId);if(!header)return [];
+  const segmentRows=await getPool().query(`select * from transcript_segments where lesson_id=$1 ${input.videoId?'and video_id=$2':''} order by start_ms`,params);
+  const segments=segmentRows.rows.map(mapTranscriptLayerRow);
+  const scene=buildEvaluationContext(header.lesson_format,segments,Number(header.scene_revision));
+  return filterSceneMetrics(scene,result.rows.map(mapClassroomMetricRow),{onBlocked:event=>console.info(JSON.stringify(event))});
 }
 
 export async function reviewEvidenceCardRecord(input: {
@@ -853,6 +886,8 @@ export async function reviewEvidenceCardRecord(input: {
   finalSuggestion?: string;
   reviewComment?: string;
 }) {
+  const current=await listTeachingEvidenceCards(input.lessonId);
+  if(!current.some(card=>card.id===input.evidenceCardId))return null;
   const result = await getPool().query(`
     update evidence_cards
     set
@@ -862,6 +897,11 @@ export async function reviewEvidenceCardRecord(input: {
       teacher_note = $6,
       updated_at = now()
     where lesson_id = $1 and id = $2
+      and raw_json->>'stale' is distinct from 'true'
+      and exists (select 1 from lessons l where l.id=$1
+        and raw_json->'evaluationContext'->>'sceneRevision'=coalesce(to_jsonb(l)->>'scene_revision','1')
+        and raw_json->'evaluationContext'->>'sourceFormat' is not distinct from
+          case when l.lesson_format='teacher_qualification_demo' then 'teacher_certification_interview' else l.lesson_format end)
     returning *
   `, [
     input.lessonId,
@@ -874,28 +914,32 @@ export async function reviewEvidenceCardRecord(input: {
   return result.rows[0] || null;
 }
 
-export async function listTeachingEvidenceCards(lessonId: string): Promise<TeachingEvidenceCard[]> {
-  const result = await getPool().query("select * from evidence_cards where lesson_id = $1 order by start_ms, created_at", [lessonId]);
-  return result.rows.map(mapEvidenceCardRow);
+export function isSceneEvidenceRowCurrent(row:Record<string,unknown>,format:unknown,revision:number):boolean {
+  const raw=parseJsonRecord(row.raw_json);const ctx=raw.evaluationContext;
+  return raw.stale!==true && isEvaluationContextCurrent(ctx,format,revision) && isEvaluationCategoryAllowed(ctx,raw.category as TeachingEvidenceCard['category']);
+}
+export function isSceneReportRowCurrent(row:Record<string,unknown>,format:unknown,revision:number):boolean {
+  const generated=parseJsonRecord(row.generated_from);
+  return generated.stale!==true && isEvaluationContextCurrent(generated.evaluationContext,format,revision);
+}
+async function getSceneHeader(lessonId:string) {
+  const r=await getPool().query(`select lesson_format,coalesce((to_jsonb(lessons)->>'scene_revision')::integer,1) as scene_revision from lessons where id=$1`,[lessonId]);return r.rows[0]||null;
+}
+export async function listTeachingEvidenceCards(lessonId:string):Promise<TeachingEvidenceCard[]> {
+  const header=await getSceneHeader(lessonId);if(!header)return [];
+  const result=await getPool().query(`select * from evidence_cards where lesson_id=$1 and raw_json->'evaluationContext'->>'sourceFormat' is not distinct from $2 and raw_json->'evaluationContext'->>'sceneRevision'=$3 order by start_ms,created_at`,[lessonId,canonicalLessonFormat(header.lesson_format),String(header.scene_revision)]);
+  return result.rows.filter(row=>isSceneEvidenceRowCurrent(row,header.lesson_format,Number(header.scene_revision))).map(mapEvidenceCardRow);
 }
 
-export async function saveReportRecord(input: {
-  lessonId: string;
-  markdownContent: string;
-  generatedFrom: Record<string, unknown>;
-  title?: string;
-}): Promise<Report> {
-  const result = await getPool().query(`
-    insert into reports (lesson_id, title, markdown_content, generated_from)
-    values ($1, $2, $3, $4::jsonb)
-    returning id, lesson_id, markdown_content, generated_from, created_at
-  `, [
-    input.lessonId,
-    input.title || "课堂复盘报告",
-    input.markdownContent,
-    JSON.stringify(input.generatedFrom)
-  ]);
-  return mapReportRow(result.rows[0]);
+export async function saveReportRecord(input:{lessonId:string;markdownContent:string;generatedFrom:Record<string,unknown>;title?:string}):Promise<Report> {
+  const client=await getPool().connect();
+  try {
+    await client.query('begin');
+    const lesson=(await client.query('select * from lessons where id=$1 for update',[input.lessonId])).rows[0];
+    if(!lesson || !isEvaluationContextCurrent(input.generatedFrom.evaluationContext,lesson.lesson_format,Number(lesson.scene_revision||1)))throw new Error('报告场景已变更，请按当前场景重新生成');
+    const result=await client.query(`insert into reports(lesson_id,title,markdown_content,generated_from) values($1,$2,$3,$4::jsonb) returning id,lesson_id,markdown_content,generated_from,created_at`,[input.lessonId,input.title||'场景复盘报告',input.markdownContent,JSON.stringify(input.generatedFrom)]);
+    await client.query('commit');return mapReportRow(result.rows[0]);
+  }catch(e){await client.query('rollback');throw e;}finally{client.release();}
 }
 
 export async function updateReportRecord(input: {
@@ -903,6 +947,8 @@ export async function updateReportRecord(input: {
   reportId: string;
   markdownContent: string;
 }): Promise<Report | null> {
+  const current=await listReportRecords(input.lessonId);
+  if(!current.some(r=>r.id===input.reportId))return null;
   const result = await getPool().query(`
     update reports
     set markdown_content = $3, updated_at = now()
@@ -912,62 +958,30 @@ export async function updateReportRecord(input: {
   return result.rows[0] ? mapReportRow(result.rows[0]) : null;
 }
 
-export async function listReportRecords(lessonId: string): Promise<Report[]> {
-  const result = await getPool().query(`
-    select id, lesson_id, markdown_content, generated_from, created_at
-    from reports
-    where lesson_id = $1
-    order by created_at desc
-  `, [lessonId]);
-  return result.rows.map(mapReportRow);
+export async function listReportRecords(lessonId:string):Promise<Report[]> {
+  const header=await getSceneHeader(lessonId);if(!header)return [];
+  const result=await getPool().query(`select id,lesson_id,markdown_content,generated_from,created_at from reports where lesson_id=$1 and generated_from->'evaluationContext'->>'sourceFormat' is not distinct from $2 and generated_from->'evaluationContext'->>'sceneRevision'=$3 order by created_at desc`,[lessonId,canonicalLessonFormat(header.lesson_format),String(header.scene_revision)]);
+  return result.rows.filter(row=>isSceneReportRowCurrent(row,header.lesson_format,Number(header.scene_revision))).map(mapReportRow);
+}
+export async function listSceneReviewRecords(lessonId:string) {
+  const r=await getPool().query('select id,lesson_id,previous_format,corrected_format,previous_context,corrected_context,label_source,review_comment,created_at from lesson_scene_reviews where lesson_id=$1 order by created_at',[lessonId]);
+  return r.rows.map(row=>({...row,labelStatus:'manual_correction_pending_validation'}));
 }
 
-export async function saveTeachingEvidenceCards(input: {
-  lessonId: string;
-  videoId: string;
-  cards: TeachingEvidenceCard[];
-  sourceModel: string;
-}): Promise<Array<Record<string, unknown>>> {
-  const rows: Array<Record<string, unknown>> = [];
-  await getPool().query("delete from evidence_cards where lesson_id = $1 and video_id = $2", [input.lessonId, input.videoId]);
-  if (!input.cards.length) return rows;
-
-  for (const card of input.cards) {
-    const result = await getPool().query(`
-      insert into evidence_cards
-        (
-          lesson_id,
-          video_id,
-          evidence_type,
-          conclusion,
-          suggestion,
-          start_ms,
-          end_ms,
-          quote_text,
-          confidence_label,
-          review_status,
-          source_model,
-          raw_json
-        )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_review', $10, $11::jsonb)
-      returning *
-    `, [
-      input.lessonId,
-      input.videoId,
-      card.category,
-      `${card.title}\n${card.fact}\n${card.interpretation}`,
-      card.suggestion || null,
-      card.startMs,
-      card.endMs,
-      card.quote,
-      card.confidence,
-      input.sourceModel,
-      JSON.stringify(card)
-    ]);
-    rows.push(result.rows[0]);
-  }
-  await getPool().query("update lessons set updated_at = now() where id = $1", [input.lessonId]);
-  return rows;
+export async function saveTeachingEvidenceCards(input:{lessonId:string;videoId:string;cards:TeachingEvidenceCard[];sourceModel:string;evaluationContext:EvaluationContext}):Promise<Array<Record<string,unknown>>> {
+  const client=await getPool().connect();const rows:Array<Record<string,unknown>>=[];
+  try {
+    await client.query('begin');
+    const lesson=(await client.query('select * from lessons where id=$1 for update',[input.lessonId])).rows[0];
+    if(!lesson || !isEvaluationContextCurrent(input.evaluationContext,lesson.lesson_format,Number(lesson.scene_revision||1)))throw new Error('场景已变更，请重新生成证据');
+    for(const card of input.cards)if(!isEvaluationContextCurrent(card.evaluationContext,lesson.lesson_format,Number(lesson.scene_revision||1)) || !isEvaluationCategoryAllowed(input.evaluationContext,card.category))throw new Error('证据与当前评价场景不匹配');
+    await client.query(`delete from evidence_cards where lesson_id=$1 and video_id=$2 and raw_json->'evaluationContext'->>'sceneRevision'=$3 and raw_json->'evaluationContext'->>'sceneType'=$4 and raw_json->'evaluationContext'->>'evaluationScope'=$5`,[input.lessonId,input.videoId,String(input.evaluationContext.sceneRevision),input.evaluationContext.sceneType,input.evaluationContext.evaluationScope]);
+    for(const card of input.cards){
+      const r=await client.query(`insert into evidence_cards(lesson_id,video_id,evidence_type,conclusion,suggestion,start_ms,end_ms,quote_text,confidence_label,review_status,source_model,raw_json) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_review',$10,$11::jsonb) returning *`,[input.lessonId,input.videoId,card.category,`${card.title}\n${card.fact}\n${card.interpretation}`,card.suggestion||null,card.startMs,card.endMs,card.quote,card.confidence,input.sourceModel,JSON.stringify({...card,evaluationContext:input.evaluationContext})]);
+      rows.push(r.rows[0]);
+    }
+    await client.query('update lessons set updated_at=now() where id=$1',[input.lessonId]);await client.query('commit');return rows;
+  }catch(e){await client.query('rollback');throw e;}finally{client.release();}
 }
 
 export async function deleteLessonRecord(lessonId: string): Promise<boolean> {
@@ -1907,6 +1921,7 @@ function mapEvidenceCardRow(row: Record<string, unknown>): TeachingEvidenceCard 
     confidence: rawCard.confidence || "medium",
     uncertaintyNote: rawCard.uncertaintyNote ?? null,
     reviewStatus: String(row.review_status || rawCard.reviewStatus || "pending_review") as ReviewStatus,
+    evaluationContext: rawCard.evaluationContext,
     learningCheck: rawCard.learningCheck,
     analysis: rawCard.analysis,
     teacherView: rawCard.teacherView

@@ -1,3 +1,4 @@
+import { interactionEvidenceCategories } from "@class-reflect/shared-types";
 import type { EvidenceCategory, LessonFormat } from "@class-reflect/shared-types";
 
 export type EvidenceProfile = {
@@ -23,7 +24,7 @@ export function semanticEvidenceCategoriesForLlm(categories: EvidenceCategory[])
   return categories.filter((category) => !deterministic.has(category));
 }
 
-export const evidenceProfileByLessonFormat = {
+export const evidenceProfileByLessonFormat: Record<LessonFormat,EvidenceProfile> = {
   offline_classroom_recording: {
     priorityCategories: [
       "question_quality",
@@ -277,6 +278,14 @@ export const evidenceProfileByLessonFormat = {
   }
 } satisfies Record<LessonFormat, EvidenceProfile>;
 
+// Presentation routes have a distinct metric system, including the legacy alias.
+for (const format of ['recorded_online_class','teacher_certification_interview','teacher_qualification_demo'] as const) {
+  const profile = evidenceProfileByLessonFormat[format];
+  profile.priorityCategories = profile.priorityCategories.filter(c=>!interactionEvidenceCategories.includes(c));
+  profile.positiveCategories = profile.positiveCategories.filter(c=>!interactionEvidenceCategories.includes(c));
+  profile.negativeCategories = profile.negativeCategories.filter(c=>!interactionEvidenceCategories.includes(c));
+  profile.disabledCategories = [...new Set<EvidenceCategory>([...profile.disabledCategories,...interactionEvidenceCategories])];
+}
 export function defaultCategoriesForLessonFormat(lessonFormat: LessonFormat): EvidenceCategory[] {
   return evidenceProfileByLessonFormat[lessonFormat].priorityCategories;
 }

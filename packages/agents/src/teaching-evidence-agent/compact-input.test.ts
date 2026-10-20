@@ -60,43 +60,9 @@ test("teaching evidence LLM payload carries a compact profile instead of long le
     generationConfig: { language: "zh-CN" }
   });
 
-  assert.deepEqual(payload.ap, {
-    x: ["wait_time", "student_response", "feedback_quality", "response_pattern", "classroom_management", "follow_up", "misconception_handling"],
-    p: [
-      "lesson_structure",
-      "information_density",
-      "question_quality",
-      "method_generalization",
-      "knowledge_connection",
-      "structured_review",
-      "explanation_quality",
-      "cognitive_scaffolding",
-      "example_quality"
-    ],
-    pos: [
-      "lesson_structure",
-      "question_quality",
-      "method_generalization",
-      "knowledge_connection",
-      "structured_review",
-      "explanation_quality",
-      "cognitive_scaffolding",
-      "example_quality"
-    ],
-    neg: [
-      "question_quality",
-      "lesson_structure",
-      "information_density",
-      "method_generalization",
-      "knowledge_connection",
-      "structured_review",
-      "explanation_quality",
-      "cognitive_scaffolding",
-      "example_quality"
-    ],
-    mp: 3,
-    mn: 3
-  });
+  assert.deepEqual(payload.ap.p,['lesson_structure','information_density','method_generalization','knowledge_connection','structured_review','explanation_quality','cognitive_scaffolding','example_quality']);
+  for(const c of ['question_quality','feedback_quality','student_response','learning_check_level'])assert.equal(payload.ap.p.includes(c as any),false);
+  assert.equal(payload.scene_type,'recorded_instruction');
   assert.equal(JSON.stringify(payload.ap).includes("录播课"), false);
 });
 
@@ -119,7 +85,7 @@ test("evidence profiles include teaching-quality negative categories without tre
   assert.ok(evidenceProfileByLessonFormat.recorded_online_class.priorityCategories.includes("explanation_quality"));
   assert.ok(evidenceProfileByLessonFormat.recorded_online_class.priorityCategories.includes("cognitive_scaffolding"));
   assert.ok(evidenceProfileByLessonFormat.recorded_online_class.priorityCategories.includes("example_quality"));
-  assert.ok(evidenceProfileByLessonFormat.recorded_online_class.negativeCategories.includes("question_quality"));
+  assert.equal(evidenceProfileByLessonFormat.recorded_online_class.negativeCategories.includes("question_quality"),false);
   assert.ok(evidenceProfileByLessonFormat.recorded_online_class.negativeCategories.includes("method_generalization"));
   assert.equal(new Set<string>(evidenceProfileByLessonFormat.recorded_online_class.priorityCategories).has("misconception_handling"), false);
   assert.ok(evidenceProfileByLessonFormat.recorded_online_class.disabledCategories.includes("feedback_quality"));
@@ -130,17 +96,17 @@ test("teacher certification interview profile treats simulated teaching as no-re
   const profile = evidenceProfileByLessonFormat.teacher_certification_interview;
   assert.equal(profile.priorityCategories[0], "teaching_objective_alignment");
   assert.ok(profile.priorityCategories.includes("lesson_structure"));
-  assert.ok(profile.priorityCategories.includes("question_quality"));
-  assert.ok(profile.priorityCategories.includes("simulated_interaction_quality"));
-  assert.ok(profile.priorityCategories.includes("feedback_quality"));
+  assert.equal(profile.priorityCategories.includes("question_quality"),false);
+  assert.equal(profile.priorityCategories.includes("simulated_interaction_quality"),false);
+  assert.equal(profile.priorityCategories.includes("feedback_quality"),false);
   assert.ok(profile.priorityCategories.includes("explanation_quality"));
   assert.ok(profile.priorityCategories.includes("cognitive_scaffolding"));
   assert.ok(profile.priorityCategories.includes("teacher_language"));
   assert.ok(profile.priorityCategories.includes("closure_quality"));
-  assert.ok(profile.priorityCategories.includes("teaching_evaluation"));
+  assert.equal(profile.priorityCategories.includes("teaching_evaluation"),false);
   assert.ok(profile.priorityCategories.includes("knowledge_accuracy"));
-  assert.ok(profile.negativeCategories.includes("question_quality"));
-  assert.ok(profile.negativeCategories.includes("feedback_quality"));
+  assert.equal(profile.negativeCategories.includes("question_quality"),false);
+  assert.equal(profile.negativeCategories.includes("feedback_quality"),false);
   assert.ok(profile.negativeCategories.includes("explanation_quality"));
   assert.ok(profile.disabledCategories.includes("wait_time"));
   assert.ok(profile.disabledCategories.includes("student_response"));
@@ -288,7 +254,7 @@ test("teaching evidence LLM payload filters categories already handled by determ
     }
   });
 
-  assert.deepEqual(payload.generationConfig?.enabledCategories, ["question_quality", "feedback_quality"]);
+  assert.deepEqual(payload.generationConfig?.enabledCategories, []);
   const priorityCategories = new Set<string>(payload.ap.p);
   assert.equal(priorityCategories.has("wait_time"), false);
   assert.equal(priorityCategories.has("response_pattern"), false);

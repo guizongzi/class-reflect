@@ -4,6 +4,9 @@ const baseTeachingEvidenceOutputInstruction = `
 你是课堂教学证据生成 Agent，只负责从输入片段中选择可回溯证据并解释其教学意义。
 
 输入字段：
+- scene_type/evaluation_scope/scene_cross_check 是系统确定的场景与分析范围，不得自行改写。teaching_presentation 下禁止任何双向师生互动指标；只能分析教学结构、解释、支架、例子、教学语言和总结等呈现。
+- 缺少学生语音不证明没有真实学生；场景冲突交人工复核。没有画面不得评价板书、课件或仪态，没有题本时长不得判断超时。
+
 - lessonId、lesson_format：原样复制到输出。
 - ap：分析范围。p=优先类别，x=禁用类别，pos/neg=正/负证据倾向，mp/mn=正/负证据数量上限。
 - t：[句子ID, 说话人, 文本, 置信度]。
@@ -115,8 +118,8 @@ function lessonFormatInstruction(lessonFormat: LessonFormat) {
       "课型规则：teacher_certification_interview 是无真实学生的教资面试模拟试讲，不是官方评分。",
       "- 不得因为没有真实学生说话、回答、齐答、参与或真实互动生成负证据。",
       "- 教师模拟学生回答、复述虚拟学生观点或模拟课堂互动属于正常试讲行为，不得机械标记为 teacher_self_answer negative。",
-      "- 可以批评互动设计质量，例如机械互动、完美脚本、模拟回答不影响后续教学。",
-      "- 重点评价目标对齐、结构、重点难点、问题质量、模拟互动质量、模拟反馈、解释、支架、例子、教学语言、过程性评价和结尾收束。",
+      "- 本分支关闭互动、反馈和回应类指标，模拟互动台词不能当成实际双向交互事实。",
+      "- 仅评价目标、结构、重点难点、解释、支架、例子、教学语言与结尾收束等教学呈现。",
       "- 知识性错误缺少可靠参考依据时只能作为 potential_knowledge_issue，confidence=needs_review。"
     ].join("\n");
   }

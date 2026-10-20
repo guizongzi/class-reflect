@@ -1,3 +1,4 @@
+import { filterSceneMetrics, buildEvaluationContext, isEvaluationContextCurrent, isEvaluationCategoryAllowed, evaluationSceneLabel, evaluationSceneNotice, type EvaluationContext } from "@class-reflect/shared-types";
 import type { CreateLessonRequest } from "@class-reflect/api-contracts";
 import type { ClassroomEvent, ClassroomMetric, LessonFormat, LessonSection, Report, TeachingEvidenceCard, TranscriptSegment, WorkflowStatus } from "@class-reflect/shared-types";
 
@@ -99,10 +100,15 @@ export function detectClassroomEvents(transcriptSegments: TranscriptSegment[]): 
 export function buildReportFromAcceptedEvidence(input: {
   lesson: Lesson;
   evidenceCards: TeachingEvidenceCard[];
+  evaluationContext?: EvaluationContext;
   metrics?: ClassroomMetric[];
 }): Report {
-  const accepted = input.evidenceCards.filter((card) => ["accepted", "edited_and_accepted"].includes(card.reviewStatus));
-  const metrics = input.metrics || [];
+  const scene=input.evaluationContext||buildEvaluationContext(input.lesson.lessonFormat,[]);
+  const presentation=scene.evaluationScope==='teaching_presentation';
+  const accepted = input.evidenceCards.filter(card=>['accepted','edited_and_accepted'].includes(card.reviewStatus)
+    && isEvaluationContextCurrent(card.evaluationContext,scene.sourceFormat,scene.sceneRevision)
+    && card.evaluationContext?.evaluationScope===scene.evaluationScope && isEvaluationCategoryAllowed(scene,card.category));
+  const metrics = filterSceneMetrics(scene,input.metrics || []);
   const metricsSummary = metrics.length
     ? metrics.map((metric) => `- ${metric.name}：${formatMetricValue(metric)}${formatMetricDetail(metric)}`).join("\n")
     : "- 暂无已计算的确定性课堂指标。请先完成转写和 calculate_metrics 步骤。";
@@ -120,21 +126,23 @@ export function buildReportFromAcceptedEvidence(input: {
   return {
     lessonId: input.lesson.id,
     markdownContent: [
-      "# 课堂复盘报告",
+      scene.sceneType==='simulated_demo'?'# 模拟试讲复盘报告':presentation?'# 教学呈现复盘报告':'# 真实课堂复盘报告',
       "",
       "## 1. 课堂基本信息",
       "",
       `- 课程：${input.lesson.courseTitle}`,
       `- 课堂：${input.lesson.lessonTitle}`,
-      `- 课程形式：${input.lesson.lessonFormat}`,
+      `- 分析场景：${evaluationSceneLabel(scene)}`,
+      `- 场景版本：${scene.sceneRevision}`,
       "",
       "## 2. 本次复盘目标",
       "",
-      "围绕课堂结构、教学互动、学习检查和可追溯证据进行复盘。",
+      presentation?'围绕试讲或录播的教学设计、讲解、例子、支架、语言与收束进行复盘。':'围绕可观察的提问、回应、反馈与教学结构进行复盘。',
       "",
       "## 3. 素材与分析范围",
       "",
-      "本报告只整理教师已确认的候选证据，不重新分析原始逐字稿。",
+      "本报告只整理教师已确认且与当前场景版本一致的候选证据，不重新分析原始逐字稿。",
+      evaluationSceneNotice(scene),
       "",
       "## 4. 课堂结构与关键指标",
       "",
@@ -155,6 +163,8 @@ export function buildReportFromAcceptedEvidence(input: {
       "报告不评价教师人格、能力或学生真实掌握程度；没有音视频和逐字稿证据支持的内容不进入报告。"
     ].join("\n"),
     generatedFrom: {
+      evaluationContext: scene,
+      templateVersion: presentation?"presentation-report.v1":"real-interaction-report.v1",
       acceptedEvidenceCardIds: accepted.map((card) => card.id),
       evidenceCount: accepted.length,
       metricIds: metrics.map((metric) => metric.id),

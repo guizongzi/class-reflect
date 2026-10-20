@@ -96,7 +96,7 @@ test("teaching evidence card validation rejects no-student-response claims in re
     transcriptSegments
   });
 
-  assert.deepEqual(result, { valid: false, reason: "recorded_material_no_student_response_claim_not_allowed" });
+  assert.deepEqual(result, { valid: false, reason: "not_applicable_to_evaluation_scene" });
 });
 
 test("teaching evidence card validation rejects realtime categories for recorded online classes", () => {
@@ -114,7 +114,7 @@ test("teaching evidence card validation rejects realtime categories for recorded
       transcriptSegments
     });
 
-    assert.deepEqual(result, { valid: false, reason: "not_applicable_to_lesson_format" });
+    assert.deepEqual(result, { valid: false, reason: "not_applicable_to_evaluation_scene" });
   }
 });
 
@@ -153,7 +153,7 @@ test("teaching evidence card validation treats teacher certification interview a
     },
     transcriptSegments
   });
-  assert.deepEqual(waitResult, { valid: false, reason: "not_applicable_to_lesson_format" });
+  assert.deepEqual(waitResult, { valid: false, reason: "not_applicable_to_evaluation_scene" });
 
   const qualityResult = validateTeachingEvidenceCard({
     lesson_format: "teacher_certification_interview",
@@ -186,7 +186,7 @@ test("teaching evidence card validation keeps legacy teacher qualification demo 
   assert.deepEqual(result, { valid: true });
 });
 
-test("teaching evidence card validation allows simulated feedback quality in teacher certification interview", () => {
+test("teaching evidence card validation disables feedback quality in teacher certification interview", () => {
   const result = validateTeachingEvidenceCard({
     lesson_format: "teacher_certification_interview",
     card: {
@@ -205,10 +205,10 @@ test("teaching evidence card validation allows simulated feedback quality in tea
     transcriptSegments
   });
 
-  assert.deepEqual(result, { valid: true });
+  assert.deepEqual(result, { valid: false, reason:"not_applicable_to_evaluation_scene" });
 });
 
-test("teaching evidence card validation allows mechanical simulated interaction critique in teacher certification interview", () => {
+test("teaching evidence card validation disables simulated interaction critique in teacher certification interview", () => {
   const result = validateTeachingEvidenceCard({
     lesson_format: "teacher_certification_interview",
     card: {
@@ -227,5 +227,9 @@ test("teaching evidence card validation allows mechanical simulated interaction 
     transcriptSegments
   });
 
-  assert.deepEqual(result, { valid: true });
+  assert.deepEqual(result, { valid: false, reason:"not_applicable_to_evaluation_scene" });
+});
+
+test('presentation-only route rejects realtime feedback despite a permissive generation profile',()=>{
+ const r=validateTeachingEvidenceCard({lesson_format:'teacher_certification_interview',card:{...baseCard,category:'feedback_quality',title:'模拟反馈',fact:'教师反馈较少'},transcriptSegments});assert.equal(r.valid,false);
 });

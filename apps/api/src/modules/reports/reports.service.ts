@@ -1,3 +1,4 @@
+import { canonicalLessonFormat } from "@class-reflect/shared-types";
 import { Injectable, NotFoundException } from "@nestjs/common";
 import type { UpdateReportRequest } from "@class-reflect/api-contracts";
 import {
@@ -23,13 +24,12 @@ export class ReportsService {
     const evidenceCards = await listTeachingEvidenceCards(lessonId);
     const metrics = await listClassroomMetrics({ lessonId });
     const report = buildReportFromAcceptedEvidence({
+      evaluationContext:detail.evaluationContext,
       lesson: {
         id: detail.lesson.id,
         lessonTitle: detail.lesson.lessonTitle,
         courseTitle: detail.lesson.courseTitle || "课堂复盘",
-        lessonFormat: detail.lesson.lessonFormat === "live_online_class" || detail.lesson.lessonFormat === "recorded_online_class"
-          ? detail.lesson.lessonFormat
-          : "offline_classroom_recording",
+        lessonFormat: canonicalLessonFormat(detail.lesson.lessonFormat)||"offline_classroom_recording",
         status: detail.lesson.status as WorkflowStatus
       },
       evidenceCards,

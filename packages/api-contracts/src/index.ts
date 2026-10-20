@@ -24,6 +24,7 @@ export const CreateLessonRequestSchema = z.object({
 export type CreateLessonRequest = z.infer<typeof CreateLessonRequestSchema>;
 
 export const UpdateLessonRequestSchema = z.object({
+  reviewComment: z.string().max(1000).optional(),
   lessonFormat: LessonFormatSchema.optional(),
   lesson_format: LessonFormatSchema.optional()
 }).refine((value) => value.lessonFormat || value.lesson_format, {
