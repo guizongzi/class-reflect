@@ -1,3 +1,10 @@
+import {recordAnnotationFeedback,selectFewShotCards,renderFewShotCard} from './annotation-feedback';
+import {WorkflowFailureError} from '@class-reflect/shared-types';
+import {fencedPool,withExecutionGuard,getExecutionGuard,claimStep,completeStep,renewStepLease,type StepLease} from './step-execution';
+import {recordWorkflowFailure,acquireProviderProbe,resetProviderCircuit,type ProviderProbe} from './failure-routing';
+import {loadWorkflowConfig,getWorkflowConfig,validateWorkflowSnapshot,type WorkflowConfigSnapshot} from '@class-reflect/config';
+import type {WorkflowFailure} from '@class-reflect/shared-types';
+import {createHash} from 'node:crypto';
 import { filterSceneMetrics, canonicalLessonFormat, buildEvaluationContext, isEvaluationContextCurrent, isEvaluationCategoryAllowed, type EvaluationContext } from "@class-reflect/shared-types";
 import { loadAppConfig } from "@class-reflect/config";
 import {
@@ -37,6 +44,12 @@ export type WorkflowRunRecord = {
   status: WorkflowStatus;
   progress: number;
   currentStep: WorkflowStepKey | null;
+  traceId?: string;
+  fencingToken?: number;
+  configSnapshot?: WorkflowConfigSnapshot;
+  retryAttempt?: number;
+  nextRetryAt?:string|null;
+  errorKind?:string|null;
   retryCount: number;
   errorMessage: string | null;
   input: Record<string, unknown>;
@@ -171,10 +184,10 @@ function getPool() {
   if (!config.databaseUrl) {
     throw new Error("DATABASE_URL is required for database-backed lesson operations");
   }
-  pool = new Pool({
+  pool = fencedPool(new Pool({
     connectionString: config.databaseUrl,
     ssl: config.databaseUrl.includes("sslmode=disable") ? false : { rejectUnauthorized: false }
-  });
+  }));
   return pool;
 }
 
@@ -341,6 +354,7 @@ export async function updateLessonRecord(input: {lessonId:string;lessonFormat?:s
       await client.query(`update reports set generated_from=jsonb_set(coalesce(generated_from,'{}'::jsonb),'{stale}','true'::jsonb) where lesson_id=$1`,[input.lessonId]);
     }
     const result=await client.query('update lessons set lesson_format=$2,scene_revision=$3,updated_at=now() where id=$1 returning *',[input.lessonId,format,revision]);
+    if(changed)await invalidateWorkflowAfterInputChange(client,input.lessonId);
     await client.query('commit');const row=result.rows[0];
     return {id:row.id,courseTitle:row.course_title,lessonTitle:row.lesson_title,lessonFormat:row.lesson_format,sceneRevision:revision,grade:row.grade,subject:row.subject,status:row.status,createdAt:toIsoString(row.created_at),updatedAt:toIsoString(row.updated_at)};
   } catch(e){await client.query('rollback');throw e;} finally{client.release();}
@@ -557,10 +571,18 @@ export async function listTranscriptSegments(input: {
   return result.rows.map(mapTranscriptLayerRow);
 }
 
+async function invalidateWorkflowAfterInputChange(client:Queryable,lessonId:string){
+ await client.query(`update workflow_runs set status='waiting_for_human',current_step='build_sections',fencing_token=fencing_token+1,lease_until=null,locked_by=null,next_retry_at=null,output=jsonb_set(output,'{build_sections}',coalesce(output->'build_sections','{}'::jsonb)-'confirmedAt'),updated_at=now() where lesson_id=$1 and status<>'cancelled'`,[lessonId]);
+ await client.query(`update workflow_step_runs set status='waiting',progress=0,finished_at=null where workflow_run_id in(select id from workflow_runs where lesson_id=$1 and status<>'cancelled') and step_key=any($2::text[])`,[lessonId,workflowStepOptions.slice(workflowStepOptions.findIndex(s=>s.key==='calculate_metrics')).map(s=>s.key)]);
+ await client.query("update sample_pool set eligible=false,updated_at=now() where lesson_id=$1",[lessonId]);
+}
+
 async function invalidateSceneAfterRoleChange(client:Queryable,lessonId:string):Promise<void>{
   await client.query('update lessons set scene_revision=scene_revision+1,updated_at=now() where id=$1',[lessonId]);
   await client.query(`update evidence_cards set review_status='needs_more_context',raw_json=jsonb_set(coalesce(raw_json,'{}'::jsonb),'{stale}','true'::jsonb),updated_at=now() where lesson_id=$1`,[lessonId]);
   await client.query(`update reports set generated_from=jsonb_set(coalesce(generated_from,'{}'::jsonb),'{stale}','true'::jsonb) where lesson_id=$1`,[lessonId]);
+  await client.query('update sample_pool set eligible=false,updated_at=now() where lesson_id=$1',[lessonId]);
+  if(!getExecutionGuard())await invalidateWorkflowAfterInputChange(client,lessonId);
   console.info(JSON.stringify({event:'scene_context_changed',lessonId,reason:'effective_role_changed',metricSetReloadRequired:true}));
 }
 
@@ -738,7 +760,7 @@ export async function updateTranscriptSegmentText(input: {
       input.speakerRole || null,
       input.speakerIdentityId || null
     ]);
-    if(result.rows[0] && input.speakerRole && input.speakerRole!==previousRole)await invalidateSceneAfterRoleChange(client,input.lessonId);
+    if(result.rows[0])await invalidateSceneAfterRoleChange(client,input.lessonId);
     if (await tableHasColumn("evidence_cards", "transcript_segment_ids", client)) {
       await client.query(`
         update evidence_cards
@@ -886,9 +908,14 @@ export async function reviewEvidenceCardRecord(input: {
   finalSuggestion?: string;
   reviewComment?: string;
 }) {
-  const current=await listTeachingEvidenceCards(input.lessonId);
-  if(!current.some(card=>card.id===input.evidenceCardId))return null;
-  const result = await getPool().query(`
+  const client=await getPool().connect();
+  try{
+  await client.query('begin');
+  await client.query('select id from lessons where id=$1 for update',[input.lessonId]);
+  const previous=(await client.query('select * from evidence_cards where lesson_id=$1 and id=$2 for update',[input.lessonId,input.evidenceCardId])).rows[0];
+  if(!previous){await client.query('rollback');return null;}
+  if(previous.review_status===input.status && (previous.edited_conclusion||'')===([input.finalFact,input.finalJudgment].filter(Boolean).join('\n')||'') && (previous.teacher_note||'')===(input.reviewComment||'') && (!input.finalSuggestion||previous.suggestion===input.finalSuggestion)){await client.query('commit');return previous;}
+  const result = await client.query(`
     update evidence_cards
     set
       review_status = $3,
@@ -911,7 +938,22 @@ export async function reviewEvidenceCardRecord(input: {
     input.finalSuggestion || null,
     input.reviewComment || null
   ]);
-  return result.rows[0] || null;
+  const row=result.rows[0];
+  if(row){
+    const source=await client.query('select * from transcript_segments where lesson_id=$1 and video_id=$2 order by start_ms',[input.lessonId,row.video_id]);
+    const sourceText=source.rows.map(mapTranscriptLayerRow).map(segment=>segment.text).join('\n');
+    const raw=parseJsonRecord(row.raw_json);const ctx=raw.evaluationContext as EvaluationContext;
+    const action=input.status==='accepted'||input.status==='edited_and_accepted'?'accept':input.status==='rejected'?'reject':'revoke';
+    await recordAnnotationFeedback(client,{
+      eventKey:createHash('sha256').update(JSON.stringify({id:row.id,previous:previous.updated_at,status:input.status,edited:row.edited_conclusion,note:row.teacher_note})).digest('hex'),
+      evidenceId:String(row.id),lessonId:input.lessonId,sourceHash:createHash('sha256').update(sourceText).digest('hex'),
+      scene:ctx.sceneType,sceneRevision:ctx.sceneRevision,category:String(raw.category||row.evidence_type),action,
+      quote:String(raw.quote||row.quote_text||''),sourceText,annotationComplete:!!raw.fact&&!!raw.interpretation,
+      traceId:row.trace_id?String(row.trace_id):undefined,caseExplanation:input.finalJudgment||String(raw.interpretation||'')
+    });
+  }
+  await client.query('commit');return row||null;
+  }catch(e){await client.query('rollback');throw e;}finally{client.release();}
 }
 
 export function isSceneEvidenceRowCurrent(row:Record<string,unknown>,format:unknown,revision:number):boolean {
@@ -925,9 +967,9 @@ export function isSceneReportRowCurrent(row:Record<string,unknown>,format:unknow
 async function getSceneHeader(lessonId:string) {
   const r=await getPool().query(`select lesson_format,coalesce((to_jsonb(lessons)->>'scene_revision')::integer,1) as scene_revision from lessons where id=$1`,[lessonId]);return r.rows[0]||null;
 }
-export async function listTeachingEvidenceCards(lessonId:string):Promise<TeachingEvidenceCard[]> {
+export async function listTeachingEvidenceCards(lessonId:string,videoId?:string):Promise<TeachingEvidenceCard[]> {
   const header=await getSceneHeader(lessonId);if(!header)return [];
-  const result=await getPool().query(`select * from evidence_cards where lesson_id=$1 and raw_json->'evaluationContext'->>'sourceFormat' is not distinct from $2 and raw_json->'evaluationContext'->>'sceneRevision'=$3 order by start_ms,created_at`,[lessonId,canonicalLessonFormat(header.lesson_format),String(header.scene_revision)]);
+  const result=await getPool().query(`select * from evidence_cards where lesson_id=$1 and raw_json->'evaluationContext'->>'sourceFormat' is not distinct from $2 and raw_json->'evaluationContext'->>'sceneRevision'=$3 ${videoId?'and video_id=$4':''} order by start_ms,created_at`,[lessonId,canonicalLessonFormat(header.lesson_format),String(header.scene_revision),...(videoId?[videoId]:[])]);
   return result.rows.filter(row=>isSceneEvidenceRowCurrent(row,header.lesson_format,Number(header.scene_revision))).map(mapEvidenceCardRow);
 }
 
@@ -937,7 +979,7 @@ export async function saveReportRecord(input:{lessonId:string;markdownContent:st
     await client.query('begin');
     const lesson=(await client.query('select * from lessons where id=$1 for update',[input.lessonId])).rows[0];
     if(!lesson || !isEvaluationContextCurrent(input.generatedFrom.evaluationContext,lesson.lesson_format,Number(lesson.scene_revision||1)))throw new Error('报告场景已变更，请按当前场景重新生成');
-    const result=await client.query(`insert into reports(lesson_id,title,markdown_content,generated_from) values($1,$2,$3,$4::jsonb) returning id,lesson_id,markdown_content,generated_from,created_at`,[input.lessonId,input.title||'场景复盘报告',input.markdownContent,JSON.stringify(input.generatedFrom)]);
+    const result=await client.query(`insert into reports(lesson_id,title,markdown_content,generated_from) values($1,$2,$3,$4::jsonb) on conflict(step_execution_id) do update set markdown_content=excluded.markdown_content,generated_from=excluded.generated_from returning id,lesson_id,markdown_content,generated_from,created_at`,[input.lessonId,input.title||'场景复盘报告',input.markdownContent,JSON.stringify(input.generatedFrom)]);
     await client.query('commit');return mapReportRow(result.rows[0]);
   }catch(e){await client.query('rollback');throw e;}finally{client.release();}
 }
@@ -947,15 +989,14 @@ export async function updateReportRecord(input: {
   reportId: string;
   markdownContent: string;
 }): Promise<Report | null> {
-  const current=await listReportRecords(input.lessonId);
-  if(!current.some(r=>r.id===input.reportId))return null;
-  const result = await getPool().query(`
-    update reports
-    set markdown_content = $3, updated_at = now()
-    where lesson_id = $1 and id = $2
-    returning id, lesson_id, markdown_content, generated_from, created_at
-  `, [input.lessonId, input.reportId, input.markdownContent]);
-  return result.rows[0] ? mapReportRow(result.rows[0]) : null;
+  const client=await getPool().connect();try{
+  await client.query('begin');
+  const header=(await client.query('select * from lessons where id=$1 for update',[input.lessonId])).rows[0];
+  const current=(await client.query('select * from reports where lesson_id=$1 and id=$2 for update',[input.lessonId,input.reportId])).rows[0];
+  if(!header||!current||!isSceneReportRowCurrent(current,header.lesson_format,Number(header.scene_revision))){await client.query('rollback');return null;}
+  const result=await client.query('update reports set markdown_content=$3,updated_at=now() where lesson_id=$1 and id=$2 returning *',[input.lessonId,input.reportId,input.markdownContent]);
+  await client.query('commit');return result.rows[0]?mapReportRow(result.rows[0]):null;
+  }catch(e){await client.query('rollback');throw e;}finally{client.release();}
 }
 
 export async function listReportRecords(lessonId:string):Promise<Report[]> {
@@ -1084,6 +1125,7 @@ export async function saveTranslationResult(input: {
 
 export type LessonVideoRecord = {
   id: string;
+  traceId?:string;
   lessonId: string;
   bucket: string;
   objectKey: string;
@@ -1182,7 +1224,7 @@ export async function markLessonVideoUploaded(videoId: string): Promise<LessonVi
     });
     await updateWorkflowStepByVideo(video.id, "upload_video", "completed", 100);
     const nextStepKey = getNextWorkflowStepForVideo(video);
-    await updateWorkflowRunStatus({
+    if(run.status==='queued' && ['upload_video','upload_audio','probe_media'].includes(run.currentStep||''))await updateWorkflowRunStatus({
       workflowRunId: run.id,
       status: "queued",
       currentStep: nextStepKey,
@@ -1234,7 +1276,7 @@ export async function markLessonVideoAudioUploaded(videoId: string): Promise<Les
     });
     await updateWorkflowStepByVideo(video.id, "upload_audio", "completed", 100);
     const nextStepKey = getNextWorkflowStepForVideo(video);
-    await updateWorkflowRunStatus({
+    if(run.status==='queued' && ['upload_video','upload_audio','probe_media'].includes(run.currentStep||''))await updateWorkflowRunStatus({
       workflowRunId: run.id,
       status: "queued",
       currentStep: nextStepKey,
@@ -1244,21 +1286,15 @@ export async function markLessonVideoAudioUploaded(videoId: string): Promise<Les
   return video;
 }
 
-export async function createOrResumeLessonWorkflow(video: LessonVideoRecord, input: Record<string, unknown> = {}): Promise<WorkflowRunRecord> {
-  const existing = await getPool().query(`
-    select *
-    from workflow_runs
-    where video_id = $1 and status not in ('completed', 'cancelled')
-    order by created_at desc
-    limit 1
-  `, [video.id]);
-
-  const run = existing.rows[0]
-    ? await updateWorkflowRunInput(existing.rows[0].id, input)
-    : await createWorkflowRun(video, input);
-
-  await seedWorkflowSteps(run.id);
-  return run;
+export async function createOrResumeLessonWorkflow(video:LessonVideoRecord,input:Record<string,unknown>={}):Promise<WorkflowRunRecord>{
+ const client=await getPool().connect();try{await client.query('begin');
+  await client.query('select id from lesson_videos where id=$1 for update',[video.id]);
+  const current=(await client.query("select * from workflow_runs where video_id=$1 and status not in ('completed','cancelled') order by created_at desc limit 1",[video.id])).rows[0];
+  const snapshot=loadWorkflowConfig();
+  const r=current?await client.query('update workflow_runs set input=input||$2::jsonb,updated_at=now() where id=$1 returning *',[current.id,JSON.stringify(input)]):await client.query("insert into workflow_runs(lesson_id,video_id,workflow_type,status,progress,current_step,input,config_snapshot,config_hash) values($1,$2,'lesson_analysis','queued',12,'upload_video',$3::jsonb,$4::jsonb,$5) returning *",[video.lessonId,video.id,JSON.stringify(input),JSON.stringify(snapshot),snapshot.hash]);
+  for(const step of workflowStepOptions)await client.query("insert into workflow_step_runs(workflow_run_id,step_key,status,progress) values($1,$2,'waiting',0) on conflict(workflow_run_id,step_key) do nothing",[r.rows[0].id,step.key]);
+  await client.query('commit');return mapWorkflowRunRow(r.rows[0]);
+ }catch(e){await client.query('rollback');throw e;}finally{client.release();}
 }
 
 export async function getWorkflowStatusForLesson(lessonId: string): Promise<WorkflowStatusRecord> {
@@ -1353,31 +1389,18 @@ export async function retryWorkflowRunForLesson(input: {
 
   const activeTask = current.task;
   if (!activeTask) return current;
+  const client=await getPool().connect();
+  try{await client.query('begin');
+  await client.query('select id from workflow_runs where id=$1 for update',[activeTask.id]);
   const fallbackStep = current.steps.find((step) => ["failed", "cancelled", "running", "queued", "waiting"].includes(step.status))?.stepKey;
   const fromStepKey = input.fromStepKey || fallbackStep || activeTask.currentStep || "upload_video";
   const fromIndex = Math.max(workflowStepOptions.findIndex((step) => step.key === fromStepKey), 0);
+  if(fromIndex>workflowStepOptions.findIndex(s=>s.key==='build_sections') && !(activeTask.output.build_sections as any)?.confirmedAt)throw new Error('请先人工确认逐字稿');
+  if(fromIndex>workflowStepOptions.findIndex(s=>s.key==='wait_human_review') && !(activeTask.output.wait_human_review as any)?.confirmedAt)throw new Error('请先人工完成证据终审');
   const resetStepKeys = workflowStepOptions.slice(fromIndex).map((step) => step.key);
   const humanReviewIndex = workflowStepOptions.findIndex((step) => step.key === "wait_human_review");
 
-  await getPool().query(`
-    update workflow_runs
-    set
-      status = 'queued',
-      current_step = $2,
-      progress = $3,
-      retry_count = retry_count + 1,
-      error_message = null,
-      locked_at = null,
-      locked_by = null,
-      finished_at = null,
-      updated_at = now()
-    where id = $1
-  `, [
-    activeTask.id,
-    fromStepKey,
-    Math.round((fromIndex / Math.max(workflowStepOptions.length - 1, 1)) * 100)
-  ]);
-  await getPool().query(`
+  await client.query(`
     update workflow_step_runs
     set
       status = 'waiting',
@@ -1389,9 +1412,9 @@ export async function retryWorkflowRunForLesson(input: {
     where workflow_run_id = $1
       and step_key = any($2::text[])
   `, [activeTask.id, resetStepKeys]);
-  await invalidateArtifactsForWorkflowRetry(activeTask, fromIndex);
+  await invalidateArtifactsForWorkflowRetry(activeTask, fromIndex,client);
   if (fromIndex > humanReviewIndex) {
-    await getPool().query(`
+    await client.query(`
       update workflow_step_runs
       set
         status = 'completed',
@@ -1403,7 +1426,28 @@ export async function retryWorkflowRunForLesson(input: {
         and step_key = 'wait_human_review'
     `, [activeTask.id]);
   }
+  await client.query(`
+    update workflow_runs
+    set
+      status = 'queued',
+      current_step = $2,
+      progress = $3,
+      retry_count = retry_count + 1,
+      retry_attempt=0,next_retry_at=null,lease_until=null,fencing_token=fencing_token+1,
+      error_message = null,
+      locked_at = null,
+      locked_by = null,
+      finished_at = null,
+      updated_at = now()
+    where id = $1
+  `, [
+    activeTask.id,
+    fromStepKey,
+    Math.round((fromIndex / Math.max(workflowStepOptions.length - 1, 1)) * 100)
+  ]);
+  await client.query('commit');
   return getWorkflowStatusForLesson(input.lessonId);
+  }catch(e){await client.query('rollback');throw e;}finally{client.release();}
 }
 
 export async function confirmTranscriptReviewForLesson(lessonId: string): Promise<WorkflowStatusRecord> {
@@ -1421,6 +1465,7 @@ export async function confirmTranscriptReviewForLesson(lessonId: string): Promis
     set
       status = 'queued',
       current_step = $2,
+      output=jsonb_set(output,'{build_sections}',coalesce(output->'build_sections','{}'::jsonb)||jsonb_build_object('confirmedAt',clock_timestamp())),
       progress = $3,
       error_message = null,
       locked_at = null,
@@ -1433,11 +1478,9 @@ export async function confirmTranscriptReviewForLesson(lessonId: string): Promis
   return getWorkflowStatusForLesson(lessonId);
 }
 
-async function invalidateArtifactsForWorkflowRetry(activeTask: WorkflowRunRecord, fromIndex: number) {
+async function invalidateArtifactsForWorkflowRetry(activeTask: WorkflowRunRecord, fromIndex: number,client:Queryable) {
   const stepIndex = (stepKey: WorkflowStepKey) => workflowStepOptions.findIndex((step) => step.key === stepKey);
-  const client = await getPool().connect();
-  try {
-    await client.query("begin");
+
     if (fromIndex <= stepIndex("build_sections")) {
       await client.query("delete from lesson_sections where lesson_id = $1 and video_id = $2", [activeTask.lessonId, activeTask.videoId]);
     }
@@ -1465,13 +1508,6 @@ async function invalidateArtifactsForWorkflowRetry(activeTask: WorkflowRunRecord
     if (fromIndex <= stepIndex("generate_report")) {
       await client.query("delete from reports where lesson_id = $1", [activeTask.lessonId]);
     }
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
 }
 
 function getNextWorkflowStepForVideo(video: LessonVideoRecord): WorkflowStepKey {
@@ -1491,7 +1527,7 @@ export async function claimNextWorkflowRun(workerId: string): Promise<WorkflowRu
     with candidate as (
       select id
       from workflow_runs
-      where status = 'queued'
+      where ((status = 'queued' and (next_retry_at is null or next_retry_at<=now())) or (status='running' and lease_until<=now()))
       order by created_at
       limit 1
       for update skip locked
@@ -1501,12 +1537,13 @@ export async function claimNextWorkflowRun(workerId: string): Promise<WorkflowRu
       status = 'running',
       locked_at = now(),
       locked_by = $1,
+      fencing_token=wf.fencing_token+1,lease_until=clock_timestamp()+$2*interval '1 millisecond',
       started_at = coalesce(started_at, now()),
       updated_at = now()
     from candidate
     where wf.id = candidate.id
     returning wf.*
-  `, [workerId]);
+  `, [workerId,getWorkflowConfig().execution.leaseMs]);
   if (!result.rows[0]) return null;
   const run = mapWorkflowRunRow(result.rows[0]);
   await seedWorkflowSteps(run.id);
@@ -1530,13 +1567,14 @@ export async function claimWorkflowRunById(workflowRunId: string, workerId: stri
       status = 'running',
       locked_at = now(),
       locked_by = $2,
+      fencing_token=fencing_token+1,lease_until=clock_timestamp()+$3*interval '1 millisecond',
       started_at = coalesce(started_at, now()),
       retry_count = case when status = 'failed' then retry_count + 1 else retry_count end,
       updated_at = now()
     where id = $1
-      and status in ('queued', 'failed')
+      and ((status='queued' and (next_retry_at is null or next_retry_at<=now())) or (status='running' and lease_until<=now()))
     returning *
-  `, [workflowRunId, workerId]);
+  `, [workflowRunId, workerId,getWorkflowConfig().execution.leaseMs]);
   if (!result.rows[0]) return null;
   const run = mapWorkflowRunRow(result.rows[0]);
   await seedWorkflowSteps(run.id);
@@ -1665,11 +1703,11 @@ async function createWorkflowRun(video: LessonVideoRecord, input: Record<string,
       status,
       progress,
       current_step,
-      input
+      input,config_snapshot,config_hash
     )
-    values ($1, $2, 'lesson_analysis', 'queued', 12, 'upload_video', $3::jsonb)
+    values ($1, $2, 'lesson_analysis', 'queued', 12, 'upload_video', $3::jsonb,$4::jsonb,$5)
     returning *
-  `, [video.lessonId, video.id, JSON.stringify(input)]);
+  `, [video.lessonId, video.id, JSON.stringify(input),JSON.stringify(loadWorkflowConfig()),loadWorkflowConfig().hash]);
   return mapWorkflowRunRow(result.rows[0]);
 }
 
@@ -1730,6 +1768,12 @@ function mapWorkflowRunRow(row: Record<string, unknown>): WorkflowRunRecord {
     status: String(row.status || "queued") as WorkflowStatus,
     progress: Number(row.progress || 0),
     currentStep: row.current_step == null ? null : String(row.current_step) as WorkflowStepKey,
+    traceId:row.trace_id?String(row.trace_id):undefined,
+    fencingToken:Number(row.fencing_token||0),
+    configSnapshot:row.config_snapshot?validateWorkflowSnapshot(row.config_snapshot):undefined,
+    retryAttempt:Number(row.retry_attempt||0),
+    nextRetryAt:row.next_retry_at?toIsoString(row.next_retry_at):null,
+    errorKind:row.error_kind?String(row.error_kind):null,
     retryCount: Number(row.retry_count || 0),
     errorMessage: row.error_message == null ? null : String(row.error_message),
     input: parseJsonRecord(row.input),
@@ -2023,6 +2067,7 @@ function formatSpeakerLabel(speakerId: string | number | null | undefined) {
 function mapLessonVideoRow(row: Record<string, unknown>): LessonVideoRecord {
   return {
     id: String(row.id),
+    traceId:row.trace_id?String(row.trace_id):undefined,
     lessonId: String(row.lesson_id),
     bucket: String(row.bucket || ""),
     objectKey: String(row.object_key || ""),
@@ -2039,4 +2084,74 @@ function mapLessonVideoRow(row: Record<string, unknown>): LessonVideoRecord {
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at)
   };
+}
+
+export {withExecutionGuard,getExecutionGuard};
+export async function getWorkflowStatusById(runId:string):Promise<WorkflowStatusRecord>{const task=await getWorkflowRunById(runId);return {task,steps:task?await listWorkflowSteps(runId):[]};}
+export async function pinWorkflowConfig(runId:string):Promise<WorkflowConfigSnapshot>{
+ const snapshot=loadWorkflowConfig();
+ const r=await getPool().query('update workflow_runs set config_snapshot=coalesce(config_snapshot,$2::jsonb),config_hash=coalesce(config_hash,$3) where id=$1 returning config_snapshot',[runId,JSON.stringify(snapshot),snapshot.hash]);
+ if(!r.rows[0])throw new Error('workflow not found');return validateWorkflowSnapshot(r.rows[0].config_snapshot);
+}
+export async function claimWorkflowStep(input:Parameters<typeof claimStep>[1]){return claimStep(getPool(),input);}
+export async function completeWorkflowStep(lease:StepLease,result:Record<string,unknown>){return completeStep(getPool(),lease,result);}
+export async function renewWorkflowLease(runId:string,token:number,leaseMs:number){return renewStepLease(getPool(),{runId,token,leaseMs});}
+export async function checkModelCircuit(key:string,probeMs:number){return acquireProviderProbe(getPool(),key,probeMs);}
+export async function resetModelCircuit(key:string,probe:ProviderProbe){return resetProviderCircuit(getPool(),key,probe);}
+export async function persistWorkflowFailure(failure:WorkflowFailure,policy:Parameters<typeof recordWorkflowFailure>[2],key:string,probe?:ProviderProbe){
+ const client=await getPool().connect();try{await client.query('begin');const decision=await recordWorkflowFailure(client,failure,policy,key,getExecutionGuard()?.token,probe);await client.query('commit');return decision;}catch(e){await client.query('rollback');throw e;}finally{client.release();}
+}
+export async function getVideoTrace(videoId:string):Promise<string>{const r=await getPool().query('select trace_id from lesson_videos where id=$1',[videoId]);if(!r.rows[0]?.trace_id)throw new Error('视频追踪记录不存在');return String(r.rows[0].trace_id);}
+export async function getTraceTimelineForLesson(lessonId:string,traceId:string){
+ const permitted=await getPool().query('select id from lesson_videos where lesson_id=$1 and trace_id=$2',[lessonId,traceId]);if(!permitted.rows.length)return null;
+ const runs=await getPool().query('select id,status,current_step,retry_attempt,error_kind,next_retry_at,created_at,finished_at from workflow_runs where lesson_id=$1 and trace_id=$2 order by created_at',[lessonId,traceId]);
+ const failures=await getPool().query('select step_key,kind,code,disposition,retry_at,created_at,resolved_at from workflow_failures where trace_id=$1 order by created_at',[traceId]);
+ return {traceId,runs:runs.rows,failures:failures.rows};
+}
+export type {StepLease} from './step-execution';
+export async function getCompletedStepResult(runId:string,stepKey:string,inputHash:string){const r=await getPool().query("select output from workflow_step_executions where workflow_run_id=$1 and step_key=$2 and input_hash=$3 and status='completed'",[runId,stepKey,inputHash]);return r.rows[0]?.output||null;}
+export async function getWorkflowInputVersion(lessonId:string,videoId:string){const r=await getPool().query(`select l.scene_revision,(select coalesce(sum(version),0)::text||':'||count(*)::text from transcript_segments t where t.lesson_id=l.id and t.video_id=$2) as transcript_version from lessons l where l.id=$1`,[lessonId,videoId]);return r.rows[0]||null;}
+
+export async function selectWorkflowFewShot(input:{scene:string;categories:string[];lessonId:string;sourceHash:string}){
+ const config=getWorkflowConfig();
+ const release=await getPool().query('select id from few_shot_releases order by created_at desc limit 1');if(!release.rows[0])return {releaseId:null,cards:[] as string[]};
+ const result:string[]=[];let remaining=config.retrieval.maxCharacters;
+ for(const category of input.categories){
+  const cards=await selectFewShotCards(getPool(),{scene:input.scene,category,excludeLessonId:input.lessonId,excludeSourceHash:input.sourceHash,releaseId:String(release.rows[0].id),maxCards:config.retrieval.maxCases-result.length,characterBudget:remaining});
+  for(const card of cards){const rendered=renderFewShotCard(card);result.push(rendered);remaining-=rendered.length;}
+  if(result.length>=config.retrieval.maxCases)break;
+ }
+ return {releaseId:String(release.rows[0].id),cards:result};
+}
+export async function confirmEvidenceReviewForLesson(lessonId:string){
+ const current=await getWorkflowStatusForLesson(lessonId);const run=current.task;
+ if(!run||run.status!=='waiting_for_human'||run.currentStep!=='wait_human_review')throw new Error('当前任务不在证据终审节点');
+ const cards=await listTeachingEvidenceCards(lessonId);
+ if(cards.some(c=>!['accepted','edited_and_accepted','rejected'].includes(c.reviewStatus)))throw new Error('请先完成全部当前证据审核');
+ const client=await getPool().connect();try{await client.query('begin');
+  await client.query('select id from lessons where id=$1 for update',[lessonId]);
+  const locked=(await client.query('select * from workflow_runs where id=$1 for update',[run.id])).rows[0];
+  if(!locked||locked.status!=='waiting_for_human'||locked.current_step!=='wait_human_review')throw new Error('审核状态已变更');
+  if((await listTeachingEvidenceCards(lessonId,run.videoId)).some(c=>!['accepted','edited_and_accepted','rejected'].includes(c.reviewStatus)))throw new Error('证据审核状态已变化');
+  await client.query("update workflow_step_runs set status='completed',progress=100,finished_at=now() where workflow_run_id=$1 and step_key='wait_human_review'",[run.id]);
+  await client.query("update workflow_runs set status='queued',current_step='generate_report',error_kind=null,error_message=null,output=jsonb_set(output,'{wait_human_review}',jsonb_build_object('confirmedAt',clock_timestamp())),lease_until=null,updated_at=now() where id=$1",[run.id]);
+  await client.query('commit');return getWorkflowStatusForLesson(lessonId);
+ }catch(e){await client.query('rollback');throw e;}finally{client.release();}
+}
+export async function listWorkflowReviewQueue(lessonId:string){const r=await getPool().query(`select q.id,q.priority,q.status,f.kind,f.code,f.step_key,q.created_at from workflow_review_queue q join workflow_runs w on w.id=q.workflow_run_id join workflow_failures f on f.id=q.failure_id where w.lesson_id=$1 order by q.priority,q.created_at`,[lessonId]);return r.rows;}
+export async function recordApiWorkflowFailure(lessonId:string,failure:WorkflowFailure){
+ if(!/^[0-9a-f-]{36}$/i.test(lessonId))return undefined;
+ const current=await getWorkflowStatusForLesson(lessonId);if(!current.task?.traceId)return undefined;
+ await getPool().query('insert into workflow_failures(trace_id,workflow_run_id,step_key,attempt,kind,code,safe_message,disposition) values($1,$2,$3,0,$4,$5,$6,\'api_failure\')',[current.task.traceId,current.task.id,current.task.currentStep,failure.kind,failure.code,failure.safeMessage]);
+ return current.task.traceId;
+}
+export async function resolveWorkflowFailures(runId:string,stepKey:string){await getPool().query('update workflow_runs set retry_attempt=0,error_kind=null,error_message=null where id=$1',[runId]);await getPool().query("update workflow_review_queue set status='resolved' where workflow_run_id=$1 and failure_id in(select id from workflow_failures where workflow_run_id=$1 and step_key=$2)",[runId,stepKey]);await getPool().query('update workflow_failures set resolved_at=clock_timestamp() where workflow_run_id=$1 and step_key=$2 and resolved_at is null',[runId,stepKey]);}
+export async function getWorkflowQualityMetrics(lessonId:string){
+ const r=await getPool().query(`select count(*) filter(where kind='provider_transient')::integer as recoverable_failures,
+ count(*) filter(where kind='provider_transient' and resolved_at is not null)::integer as recovered_failures,
+ avg(extract(epoch from (resolved_at-created_at))) filter(where kind='provider_transient' and resolved_at is not null) as mean_recovery_seconds,
+ count(*) filter(where kind='schema_invalid')::integer as schema_exhausted_failures,
+ count(*) filter(where kind='business_rule_rejected')::integer as business_rejections
+ from workflow_failures f join workflow_runs w on w.id=f.workflow_run_id where w.lesson_id=$1`,[lessonId]);
+ return {scope:'failure_events_not_independent_task_rate',...r.rows[0]};
 }

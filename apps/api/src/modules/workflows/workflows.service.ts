@@ -4,7 +4,11 @@ import { createLogger } from "@class-reflect/observability";
 import {
   cancelWorkflowRunForLesson,
   confirmTranscriptReviewForLesson,
+  confirmEvidenceReviewForLesson,
+  listWorkflowReviewQueue,
+  getWorkflowQualityMetrics,
   getWorkflowStatusForLesson,
+  getTraceTimelineForLesson,
   retryWorkflowRunForLesson,
   type WorkflowRunRecord,
   type WorkflowStatusRecord
@@ -16,8 +20,11 @@ export class WorkflowsService {
   private readonly config = loadAppConfig();
   private readonly logger = createLogger("api.workflows");
 
-  getLessonStatus(lessonId: string) {
-    return getWorkflowStatusForLesson(lessonId);
+  async traceTimeline(lessonId:string,traceId:string){return getTraceTimelineForLesson(lessonId,traceId);}
+
+  async getLessonStatus(lessonId: string) {
+    const status=await getWorkflowStatusForLesson(lessonId);
+    return {...status,reviewQueue:await listWorkflowReviewQueue(lessonId)};
   }
 
   async ensureLessonWorkflowQueued(lessonId: string): Promise<WorkflowStatusRecord> {
@@ -40,6 +47,10 @@ export class WorkflowsService {
     return this.ensureLessonWorkflowQueued(lessonId);
   }
 
+  async confirmEvidenceReview(lessonId:string){await confirmEvidenceReviewForLesson(lessonId);return this.ensureLessonWorkflowQueued(lessonId);}
+  async qualityMetrics(lessonId:string){return getWorkflowQualityMetrics(lessonId);}
+  async reviewQueue(lessonId:string){return {items:await listWorkflowReviewQueue(lessonId)};}
+
   async confirmTranscriptReview(lessonId: string) {
     await confirmTranscriptReviewForLesson(lessonId);
     return this.ensureLessonWorkflowQueued(lessonId);
@@ -52,7 +63,7 @@ export class WorkflowsService {
     }
 
     const taskPath = this.config.workflowTaskPath || "/api/workflows/process";
-    const correlationId = buildWorkflowCorrelationId(workflowRun.id, workflowRun.retryCount);
+    const correlationId = workflowRun.traceId||workflowRun.id;
     const requestBody = {
       workflowRunId: workflowRun.id,
       lessonId: workflowRun.lessonId,

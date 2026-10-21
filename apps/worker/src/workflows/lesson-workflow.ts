@@ -7,7 +7,7 @@ const logger = createLogger("lesson-workflow");
 export async function runLessonWorkflowOnce(workerId = process.env.WORKER_ID || `worker-${process.pid}`): Promise<{ claimed: boolean }> {
   const workflow = await claimNextWorkflowRun(workerId);
   if (!workflow) return { claimed: false };
-  const correlationId = buildWorkflowCorrelationId(workflow.id, workflow.retryCount);
+  const correlationId = workflow.traceId||workflow.id;
 
   logger.info("claimed workflow", {
     correlationId,
@@ -37,7 +37,7 @@ export async function runLessonWorkflowById(input: {
     return { processed: false, reason: current.status };
   }
 
-  const correlationId = input.correlationId || buildWorkflowCorrelationId(workflow.id, workflow.retryCount);
+  const correlationId = workflow.traceId||workflow.id;
   logger.info("claimed workflow by id", {
     correlationId,
     workflowRunId: workflow.id,

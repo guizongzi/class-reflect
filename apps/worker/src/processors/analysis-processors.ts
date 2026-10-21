@@ -1,7 +1,10 @@
+import {createHash} from 'node:crypto';
+import {WorkflowFailureError,allowedSceneIds} from '@class-reflect/shared-types';
 import {filterSceneMetrics} from '@class-reflect/shared-types';
 import { buildDisplayTranscriptSections, runTeachingEvidenceAgent, runTranscriptNormalizer } from "@class-reflect/agents";
 import {
   getTeachingEvidenceSource,
+  selectWorkflowFewShot,
   getLessonRecord,
   listClassroomEvents,
   listTranscriptSegments,
@@ -155,7 +158,9 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
 
     const classroomEvents = await listClassroomEvents({ lessonId: source.lesson.id, videoId: context.workflow.videoId });
     const scene = buildEvaluationContext(source.lesson.sceneLabelConfirmed ? source.lesson.lessonFormat : null,source.transcriptSegments,source.lesson.sceneRevision);
+    const references=await selectWorkflowFewShot({scene:scene.sceneType,categories:[...allowedSceneIds(scene,'category')],lessonId:source.lesson.id,sourceHash:createHash('sha256').update(source.transcriptSegments.map(s=>s.text).join('\n')).digest('hex')});
     const result = await runTeachingEvidenceAgent({
+      auxiliaryCases:references.cards,
       lessonId: source.lesson.id,
       traceId: context.traceId,
       lesson_format: source.lesson.lessonFormat,
@@ -187,6 +192,7 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
     const sceneMetricGuard=summarizeSceneMetricGuard(scene,result.output.evidenceCards.map(c=>c.category),validCards.map(c=>c.category));
     const generationSceneGuard=result.output.sceneMetricGuard;
     console.info(JSON.stringify({event:"scene_metric_guard",workflowRunId:context.workflow.id,scene_type:scene.sceneType,evaluation_scope:scene.evaluationScope,generation:generationSceneGuard,storage:sceneMetricGuard}));
+    if(validCards.length!==resolvedCards.length)throw new WorkflowFailureError('business_rule_rejected','EVIDENCE_RULE_REJECTED','候选证据未通过业务核验，请优先人工复核');
     const savedCards = await saveTeachingEvidenceCards({
       lessonId: source.lesson.id,
       videoId: context.workflow.videoId,
@@ -198,6 +204,7 @@ export const generateEvidenceProcessor: WorkflowProcessor = {
     return {
       output: {
         evaluationContext: scene,
+        fewShotReleaseId:references.releaseId,
         sceneMetricGuard:{generation:generationSceneGuard,storage:sceneMetricGuard},
         promptVersion: result.promptVersion,
         instructionalContext: result.output.instructionalContext,

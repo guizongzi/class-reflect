@@ -1,8 +1,12 @@
+import {publicWorkflowConfig} from '@class-reflect/config';
 import { Controller, Get } from "@nestjs/common";
 import { loadAppConfig } from "@class-reflect/config";
 
 @Controller("api/health")
 export class HealthController {
+  @Get('workflow-config')
+  workflowConfig(){return publicWorkflowConfig();}
+
   @Get()
   getHealth() {
     const config = loadAppConfig();

@@ -1,6 +1,6 @@
 /// <reference types="node" />
 
-import { loadAppConfig } from "@class-reflect/config";
+import { getWorkflowConfig,loadWorkflowConfig, loadAppConfig } from "@class-reflect/config";
 import { createLogger } from "@class-reflect/observability";
 import { createServer, type IncomingMessage } from "node:http";
 import { runLessonWorkflowById, runLessonWorkflowOnce } from "./workflows/lesson-workflow";
@@ -9,6 +9,7 @@ const logger = createLogger("worker");
 
 async function main() {
   const config = loadAppConfig();
+  loadWorkflowConfig();
   const once = process.argv.includes("--once") || process.env.WORKER_ONCE === "true";
   const baseWorkerId = process.env.WORKER_ID || `worker-${process.pid}`;
   const mode = once ? "poll" : process.env.WORKER_MODE || "http";
@@ -32,6 +33,9 @@ async function main() {
     return;
   }
 
+  // Poll due retries and expired leases even when HTTP dispatch is the primary entry point.
+  let sweeping=false;
+  setInterval(()=>{if(sweeping)return;sweeping=true;runLessonWorkflowOnce(`${baseWorkerId}-recovery`).catch(()=>logger.error('recovery sweep failed')).finally(()=>{sweeping=false;});},getWorkflowConfig().execution.recoveryPollMs).unref();
   await startHttpServer(baseWorkerId);
 }
 

@@ -1,8 +1,10 @@
-import { canonicalLessonFormat } from "@class-reflect/shared-types";
+import { buildEvaluationContext,canonicalLessonFormat } from "@class-reflect/shared-types";
 import { Injectable, NotFoundException } from "@nestjs/common";
 import type { UpdateReportRequest } from "@class-reflect/api-contracts";
 import {
   getLessonRecord,
+  getTeachingEvidenceSource,
+  getWorkflowStatusForLesson,
   listClassroomMetrics,
   listReportRecords,
   listTeachingEvidenceCards,
@@ -19,12 +21,16 @@ export class ReportsService {
   }
 
   async generateReport(lessonId: string) {
+    const workflow=await getWorkflowStatusForLesson(lessonId);
+    if(!(workflow.task?.output.wait_human_review as any)?.confirmedAt)throw new Error('请先完成证据人工终审');
     const detail = await getLessonRecord(lessonId);
     if (!detail) throw new NotFoundException("lesson not found");
-    const evidenceCards = await listTeachingEvidenceCards(lessonId);
-    const metrics = await listClassroomMetrics({ lessonId });
+    const videoId=detail.videos[0]?.id;if(!videoId)throw new NotFoundException('video not found');
+    const source=await getTeachingEvidenceSource({lessonId,videoId});
+    const evidenceCards = await listTeachingEvidenceCards(lessonId,videoId);
+    const metrics = await listClassroomMetrics({ lessonId,videoId });
     const report = buildReportFromAcceptedEvidence({
-      evaluationContext:detail.evaluationContext,
+      evaluationContext:source?buildEvaluationContext(source.lesson.lessonFormat,source.transcriptSegments,source.lesson.sceneRevision):detail.evaluationContext,
       lesson: {
         id: detail.lesson.id,
         lessonTitle: detail.lesson.lessonTitle,
@@ -38,7 +44,7 @@ export class ReportsService {
     const saved = await saveReportRecord({
       lessonId,
       markdownContent: report.markdownContent,
-      generatedFrom: report.generatedFrom
+      generatedFrom: {...report.generatedFrom,videoId:detail.videos[0]?.id}
     });
     return { ok: true, report: saved };
   }

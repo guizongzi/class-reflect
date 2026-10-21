@@ -24,8 +24,8 @@ export const generateReportProcessor: WorkflowProcessor = {
   async run(context): Promise<ProcessorResult> {
     const detail = await getLessonRecord(context.workflow.lessonId);
     if (!detail) throw new Error(`课堂记录不存在：${context.workflow.lessonId}`);
-    const evidenceCards = await listTeachingEvidenceCards(context.workflow.lessonId);
-    const metrics = await listClassroomMetrics({ lessonId: context.workflow.lessonId });
+    const evidenceCards = await listTeachingEvidenceCards(context.workflow.lessonId,context.workflow.videoId);
+    const metrics = await listClassroomMetrics({ lessonId: context.workflow.lessonId,videoId:context.workflow.videoId });
     const source=await getTeachingEvidenceSource({lessonId:context.workflow.lessonId,videoId:context.workflow.videoId});
     const scene=buildEvaluationContext(source?.lesson.sceneLabelConfirmed?source.lesson.lessonFormat:null,source?.transcriptSegments||[],source?.lesson.sceneRevision||detail.lesson.sceneRevision);
     const report = buildReportFromAcceptedEvidence({
@@ -43,7 +43,7 @@ export const generateReportProcessor: WorkflowProcessor = {
     const saved = await saveReportRecord({
       lessonId: context.workflow.lessonId,
       markdownContent: report.markdownContent,
-      generatedFrom: report.generatedFrom
+      generatedFrom: {...report.generatedFrom,videoId:context.workflow.videoId}
     });
     return {
       output: {

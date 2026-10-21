@@ -29,7 +29,11 @@ type WorkflowStepItem = {
 };
 
 type WorkflowStatusResponse = {
+  reviewQueue?:Array<{id:string;status:string;code:string;step_key:string;priority:number}>;
   task: {
+    traceId?:string;
+    errorKind?:string|null;
+    nextRetryAt?:string|null;
     status: string;
     currentStep?: string | null;
     progress?: number | null;
@@ -846,6 +850,11 @@ export function LessonWorkspaceShell({ lessonId }: Props) {
             <strong>{progressStageLabels[visibleProgressStageIndex]}进度</strong>
             <span>{isWorkflowRefreshing ? "刷新中" : formatWorkflowSummary(workflowStatus)}</span>
           </div>
+          {workflowStatus?.task?.traceId ? <p className="muted-text">追踪编号：{workflowStatus.task.traceId}</p> : null}
+          {workflowStatus?.task?.nextRetryAt ? <p className="muted-text">服务暂不可用，已保存进度，等待自动重试。</p> : null}
+          {workflowStatus?.task?.errorKind==='business_rule_rejected' ? <p className="muted-text">核验未通过，已进入优先人工复核队列。</p> : null}
+          {workflowStatus?.reviewQueue?.filter(item=>item.status==='pending').map(item=><p className="muted-text" key={item.id}>待复核：{item.code==='INPUT_VERSION_CHANGED'?'原文已变化，请确认最新材料后重新计算。':'候选证据未通过核验，请检查原文后重试。'}</p>)}
+          {workflowStatus?.task?.status==='waiting_for_human' && workflowStatus.task.currentStep==='wait_human_review' ? <button className="ghost-button" type="button" onClick={()=>void postJson<WorkflowStatusResponse>(`/api/lessons/${activeLessonId}/status/confirm-evidence`,{}).then(status=>{setWorkflowStatus(status);setDetailRefreshNonce(value=>value+1);}).catch(error=>setErrorMessage(error instanceof Error?error.message:'请先完成证据审核'))}>确认终审并生成报告</button> : null}
           {activeLessonId ? (
             <div className="workflow-card-toolbar">
               <button

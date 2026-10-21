@@ -1,6 +1,12 @@
+import {getWorkflowConfig,withWorkflowConfig} from '@class-reflect/config';
+import {withTraceContext} from '@class-reflect/observability';
+import {createHash} from 'node:crypto';
+import {executeStep} from './execute-step';
+import {resolveWorkflowFailures,pinWorkflowConfig,withExecutionGuard,getExecutionGuard,claimWorkflowStep,completeWorkflowStep,renewWorkflowLease,getCompletedStepResult,getWorkflowInputVersion,checkModelCircuit,resetModelCircuit,persistWorkflowFailure} from '@class-reflect/database';
+import {classifyWorkflowFailure} from '@class-reflect/shared-types';
 import { AgentOrchestrator } from "@class-reflect/agents";
 import {
-  getWorkflowStatusForLesson,
+  getWorkflowStatusById,
   updateWorkflowRunStatus,
   updateWorkflowStep,
   type WorkflowRunRecord
@@ -42,9 +48,16 @@ const processors = new Map<string, WorkflowProcessor>([
 ]);
 
 export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord, correlationId?: string) {
+ const snapshot=await pinWorkflowConfig(workflow.id);
+ if(!workflow.traceId||!workflow.fencingToken)throw new Error('工作流缺少追踪或租约信息，请执行底座迁移');
+ return withWorkflowConfig(snapshot,()=>withTraceContext({traceId:workflow.traceId!,runId:workflow.id,attemptId:String(workflow.fencingToken)},()=>withExecutionGuard({runId:workflow.id,token:workflow.fencingToken!,traceId:workflow.traceId!},()=>runPipeline({...workflow,configSnapshot:snapshot}))),{strictFailures:true});
+}
+async function runPipeline(workflow:WorkflowRunRecord){
   const orchestrator = new AgentOrchestrator();
-  const traceId = correlationId || buildWorkflowCorrelationId(workflow.id, workflow.retryCount);
-  let status = await getWorkflowStatusForLesson(workflow.lessonId);
+  const traceId = workflow.traceId!;
+  const config=getWorkflowConfig();
+  const providerKey=createHash('sha256').update((process.env.LLM_BASE_URL||'configured')+':'+(process.env.LLM_MODEL||'configured')).digest('hex');
+  let status = await getWorkflowStatusById(workflow.id);
   if (status.task?.status === "cancelled") {
     logger.info("workflow cancelled before pipeline start", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount });
     return;
@@ -71,8 +84,9 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord, cor
     return;
   }
 
-  for (const step of workflowStepOptions) {
-    status = await getWorkflowStatusForLesson(workflow.lessonId);
+  for (const configuredStep of config.steps) {
+    const step=workflowStepOptions.find(s=>s.key===configuredStep.key)!;
+    status = await getWorkflowStatusById(workflow.id);
     if (status.task?.status === "cancelled") {
       logger.info("workflow cancelled before step", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount, stepKey: step.key });
       return;
@@ -85,6 +99,12 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord, cor
 
     const currentWorkflow = status.task || workflow;
     const stepState = status.steps.find((item) => item.stepKey === step.key);
+    if(step.key==='build_sections' && stepState?.status==='completed' && !(currentWorkflow.output.build_sections as any)?.confirmedAt){
+      await updateWorkflowRunStatus({workflowRunId:workflow.id,status:'waiting_for_human',currentStep:'build_sections',progress:currentWorkflow.progress});return;
+    }
+    if(step.key==='wait_human_review' && stepState?.status==='completed' && !(currentWorkflow.output.wait_human_review as any)?.confirmedAt){
+      await updateWorkflowRunStatus({workflowRunId:workflow.id,status:'waiting_for_human',currentStep:'wait_human_review',progress:currentWorkflow.progress});return;
+    }
     if (stepState?.status === "completed" || stepState?.status === "skipped") continue;
 
     const processor = processors.get(step.key);
@@ -113,10 +133,25 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord, cor
       progress: 25
     });
 
+    let providerProbe:Awaited<ReturnType<typeof checkModelCircuit>>|undefined;
     try {
       const context: ProcessorContext = { workflow: currentWorkflow, steps: status.steps, traceId };
-      const result = await processor.run(context);
-      const latestStatus = await getWorkflowStatusForLesson(workflow.lessonId);
+      const version=await getWorkflowInputVersion(workflow.lessonId,workflow.videoId);
+      const inputHash=createHash('sha256').update(JSON.stringify({config:workflow.configSnapshot?.hash||config.version,manualRetry:workflow.retryCount,step:step.key,version})).digest('hex');
+      const result=await executeStep({
+        claim:()=>claimWorkflowStep({runId:workflow.id,stepKey:step.key,inputHash,workerToken:workflow.fencingToken!,leaseMs:config.execution.leaseMs}),
+        cached:()=>getCompletedStepResult(workflow.id,step.key,inputHash),
+        renew:()=>renewWorkflowLease(workflow.id,workflow.fencingToken!,config.execution.leaseMs),
+        complete:(lease,result)=>completeWorkflowStep(lease,result as Record<string,unknown>)
+      },async(lease)=>{
+        if(['normalize_transcript','generate_evidence'].includes(step.key))providerProbe=await checkModelCircuit(providerKey,config.failurePolicies.circuitOpenMs);
+        const result=await withTraceContext({traceId,runId:workflow.id,attemptId:String(workflow.fencingToken),stepKey:step.key},()=>withExecutionGuard({...getExecutionGuard()!,lessonId:workflow.lessonId,videoId:workflow.videoId,inputVersion:version,executionId:lease.executionId},()=>processor.run(context)));
+        if(['normalize_transcript','generate_evidence'].includes(step.key))if(providerProbe)await resetModelCircuit(providerKey,providerProbe);
+        return result;
+      },config.execution.heartbeatMs);
+      await resolveWorkflowFailures(workflow.id,step.key);
+      workflow.retryAttempt=0;
+      const latestStatus = await getWorkflowStatusById(workflow.id);
       if (latestStatus.task?.status === "cancelled") {
         logger.info("workflow cancelled after step processor", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount, stepKey: step.key });
         return;
@@ -160,23 +195,11 @@ export async function runLessonAnalysisPipeline(workflow: WorkflowRunRecord, cor
 
       if (step.key === "wait_human_review") return;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("workflow step failed", { correlationId: traceId, workflowRunId: workflow.id, retryCount: workflow.retryCount, stepKey: step.key, error: message });
-      await updateWorkflowStep({
-        workflowRunId: workflow.id,
-        stepKey: step.key,
-        status: "failed",
-        progress: 100,
-        errorMessage: message
-      });
-      await updateWorkflowRunStatus({
-        workflowRunId: workflow.id,
-        status: "failed",
-        currentStep: step.key,
-        progress,
-        errorMessage: message
-      });
-      throw error;
+      const failure=classifyWorkflowFailure(error,{traceId,runId:workflow.id,stepKey:step.key,attempt:(workflow.retryAttempt||0)+1});
+      logger.error('workflow step failed',failure);
+      await updateWorkflowStep({workflowRunId:workflow.id,stepKey:step.key,status:'failed',progress:100,errorMessage:failure.safeMessage});
+      await persistWorkflowFailure(failure,{...config.failurePolicies,schemaRetries:0},providerKey,providerProbe);
+      return;
     }
   }
 
