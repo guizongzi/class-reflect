@@ -35,7 +35,7 @@ export async function runAcceptance(mode:FaultMode='normal',options:{stage?:'bot
  const stage=options.stage||'both';
  const stats:Counters={httpRequests:0,realRequests:0,injected429:0,initialSchemaFailures:0,finalSchemaFailures:0,normalizerBusinessErrors:[],recovered:false};const started=Date.now();
  const traceId=randomUUID(),snapshot=loadWorkflowConfig(),originalFetch=globalThis.fetch;globalThis.fetch=faultFetch(originalFetch,mode,stats);
- let evidence:any[]=[];let origins:any={};let errorKind:string|undefined;let guardRejected=false;
+ let evidence:any[]=[];let origins:any={};let errorKind:string|undefined;let guardRejected=false;let validEvidenceCount=0;let exactQuoteMatchCount=0;let evidenceRuleRejections:string[]=[];
  try{await withWorkflowConfig(snapshot,()=>withTraceContext({traceId,runId:`acceptance-${traceId}`,attemptId:'1'},async()=>{
   // This harness retry validates provider recovery only; production uses persisted retry scheduling.
   let segments=excerpt;
@@ -52,11 +52,15 @@ export async function runAcceptance(mode:FaultMode='normal',options:{stage?:'bot
   if(result.promptVersion.includes('rule-based'))throw new Error('Evidence fallback cannot count as LLM success');
   origins={...origins,evidence:'llm_hybrid',evidencePromptVersion:result.promptVersion};evidence=result.output.evidenceCards;
   const scene=buildEvaluationContext('teacher_certification_interview',segments,1);
+  const validations=evidence.map(card=>validateTeachingEvidenceCard({lesson_format:'teacher_certification_interview',evaluationContext:scene,card,transcriptSegments:segments,metrics:[],classroomEvents:[]}));
+  validEvidenceCount=validations.filter(v=>v.valid).length;
+  evidenceRuleRejections=validations.filter(v=>!v.valid).map(v=>(v as {reason:string}).reason);
+  exactQuoteMatchCount=evidence.filter(card=>{const text=segments.filter(s=>card.transcriptSegmentIds.includes(s.id)).map(s=>s.text).join('').replace(/\s/g,'');return !!card.quote&&text.includes(card.quote.replace(/\s/g,''));}).length;
   // Deliberate forbidden-category probe is not stored as a real/model evidence card or gold label.
   const probe={...(evidence[0]||{}),category:'student_response',transcriptSegmentIds:[segments[0].id]} as any;
   guardRejected=!validateTeachingEvidenceCard({lesson_format:'teacher_certification_interview',evaluationContext:scene,card:probe,transcriptSegments:segments,metrics:[],classroomEvents:[]}).valid;
-  stats.recovered=mode==='normal'||mode==='429-once'&&stats.injected429===1||mode==='real-response-corrupt-array'&&stats.initialSchemaFailures===1;
+  stats.recovered=evidenceRuleRejections.length===0 && (mode==='normal'||mode==='429-once'&&stats.injected429===1||mode==='real-response-corrupt-array'&&stats.initialSchemaFailures===1);
  }));}catch(error:any){errorKind=error.kind||'internal';if(errorKind==='schema_invalid')stats.finalSchemaFailures++;}finally{globalThis.fetch=originalFetch;}
- return {summary:{scope:stage==='evidence'?'evidence-only real model path; normalizer not run; not database E2E':'real model Agent path only; not database E2E',stage,fixture:'user binary teaching demo excerpt, 12 selected utterances, not full transcript or gold set',mode,traceId,configHash:snapshot.hash,...stats,origins,guardRejected,errorKind,durationMs:Date.now()-started,evidenceCount:evidence.length},evidence};
+ return {summary:{scope:stage==='evidence'?'evidence-only real model path; normalizer not run; not database E2E':'real model Agent path only; not database E2E',stage,fixture:'user binary teaching demo excerpt, 12 selected utterances, not full transcript or gold set',mode,traceId,configHash:snapshot.hash,...stats,origins,guardRejected,validEvidenceCount,exactQuoteMatchCount,evidenceRuleRejections,errorKind,durationMs:Date.now()-started,evidenceCount:evidence.length},evidence};
 }
 if(require.main===module){const mode=(process.argv[2]||'normal') as FaultMode;const output=resolve(process.argv[3]||'');if(!['normal','real-response-corrupt-array','429-once'].includes(mode))throw new Error('Unknown mode');if(process.argv[4]&&!['--stage=evidence','--stage=both'].includes(process.argv[4]))throw new Error('Unknown stage flag');if(!output.startsWith('/private/tmp/'))throw new Error('Output must be an explicit private /private/tmp path');runAcceptance(mode,{stage:process.argv[4]==='--stage=evidence'?'evidence':'both'}).then(result=>{mkdirSync(dirname(output),{recursive:true,mode:0o700});writeFileSync(output,JSON.stringify(result,null,2),{mode:0o600});console.log(JSON.stringify(result.summary));if(result.summary.errorKind||!result.summary.guardRejected||!result.summary.recovered)process.exitCode=1;});}

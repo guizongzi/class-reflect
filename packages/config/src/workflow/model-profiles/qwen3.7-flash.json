@@ -1,0 +1,292 @@
+{
+  "version": "workflow.v1-qwen37-flash-native.v1",
+  "llm": {
+    "responseFormat": "json_schema",
+    "strictSchemaModels": [
+      "qwen3.7-flash"
+    ],
+    "strictSchemaEndpoints": [
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    ]
+  },
+  "schemas": {
+    "normalizer": {
+      "type": "object",
+      "required": [
+        "patches",
+        "warnings"
+      ],
+      "properties": {
+        "patches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "i",
+              "confidence",
+              "changeTypes",
+              "needsHumanReview"
+            ],
+            "properties": {
+              "i": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "changeTypes": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "needsHumanReview": {
+                "type": "boolean"
+              },
+              "correctedText": {
+                "type": "string"
+              },
+              "speakerRole": {
+                "type": "string"
+              },
+              "speakerIdentityId": {
+                "type": "string"
+              },
+              "reviewReasonCode": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "lessonId",
+        "evidenceCards"
+      ],
+      "properties": {
+        "evidenceCards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "category",
+              "sentiment",
+              "title",
+              "fact",
+              "interpretation",
+              "transcriptSegmentIds",
+              "quote",
+              "confidence",
+              "reviewStatus",
+              "metricIds",
+              "classroomEventIds"
+            ],
+            "properties": {
+              "category": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "fact": {
+                "type": "string"
+              },
+              "interpretation": {
+                "type": "string"
+              },
+              "sentiment": {
+                "type": "string",
+                "enum": [
+                  "positive",
+                  "negative",
+                  "neutral"
+                ]
+              },
+              "transcriptSegmentIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "metricIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "classroomEventIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "applicableLessonFormats": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "analysis": {
+                "type": "object",
+                "properties": {
+                  "reasonTags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "includedInQuestionCount": {
+                    "type": "boolean"
+                  },
+                  "includedInInteractionCount": {
+                    "type": "boolean"
+                  },
+                  "evidenceCategory": {
+                    "type": "string"
+                  },
+                  "utteranceType": {
+                    "type": "string"
+                  },
+                  "evidenceStrength": {
+                    "type": "string"
+                  },
+                  "internalReason": {
+                    "type": "string"
+                  },
+                  "suggestionDirection": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "teacherView": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "observation": {
+                    "type": "string"
+                  },
+                  "teachingMeaning": {
+                    "type": "string"
+                  },
+                  "nextStep": {
+                    "type": "string"
+                  },
+                  "exampleWording": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "id": {
+                "type": "string"
+              },
+              "lessonId": {
+                "type": "string"
+              },
+              "quote": {
+                "type": "string"
+              },
+              "reviewStatus": {
+                "type": "string",
+                "enum": [
+                  "pending_review"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "needs_review"
+                ]
+              },
+              "uncertaintyNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "startMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "endMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "learningCheck": {
+                "type": "object",
+                "properties": {
+                  "level": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5
+                  },
+                  "checkType": {
+                    "type": "string"
+                  },
+                  "responsePattern": {
+                    "type": "string"
+                  },
+                  "evidenceStrength": {
+                    "type": "string"
+                  },
+                  "limitationNote": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "level",
+                  "checkType",
+                  "responsePattern",
+                  "evidenceStrength"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "skippedCategories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lessonId": {
+          "type": "string"
+        },
+        "lesson_format": {
+          "type": "string"
+        },
+        "instructionalContext": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

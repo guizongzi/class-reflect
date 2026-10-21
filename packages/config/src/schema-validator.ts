@@ -1,6 +1,7 @@
 /** Small fail-closed validator for the JSON Schema subset used by this project. */
 export function matchesWorkflowSchema(value:unknown,schema:any):boolean{
  if(!schema||typeof schema!=='object')return false;
+ if(Array.isArray(schema.type))return schema.type.some((type:string)=>matchesWorkflowSchema(value,{...schema,type}));
  if(schema.enum&&!schema.enum.includes(value))return false;
  if(schema.type==='object'){
   if(!value||typeof value!=='object'||Array.isArray(value))return false;

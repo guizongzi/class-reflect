@@ -1,3 +1,4 @@
+import flashProfile from './workflow/model-profiles/qwen3.7-flash.json';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import defaultsRaw from './workflow/default.json';
@@ -34,12 +35,17 @@ function validate(config:WorkflowConfig){
 }
 function validateStrictSchema(schema:any):void{if(schema.type==="object"){if(schema.additionalProperties!==false)throw new Error("Strict schema must disallow extras");Object.values(schema.properties||{}).forEach(validateStrictSchema);}if(schema.type==="array")validateStrictSchema(schema.items);}
 function validateSchemaDefinition(schema:any):void{
- if(!schema||!["object","array","string","number","integer","boolean","null"].includes(schema.type))throw new Error("Invalid schema type");
+ if(!schema||(Array.isArray(schema.type)?!schema.type.length||schema.type.some((t:unknown)=>!["object","array","string","number","integer","boolean","null"].includes(t as string)):!["object","array","string","number","integer","boolean","null"].includes(schema.type)))throw new Error("Invalid schema type");
  const allowed=new Set(["type","properties","required","additionalProperties","items","enum","minimum","maximum","minItems"]);if(Object.keys(schema).some(k=>!allowed.has(k)))throw new Error("Unsupported schema keyword");
  if(schema.type==="object"){if(schema.required&&(!Array.isArray(schema.required)||schema.required.some((k:unknown)=>typeof k!=="string"||!(k in (schema.properties||{})))))throw new Error("Invalid schema required");for(const child of Object.values(schema.properties||{}))validateSchemaDefinition(child);}
  if(schema.type==="array")validateSchemaDefinition(schema.items);
 }
-export function loadWorkflowConfig(value:unknown=defaults):WorkflowConfigSnapshot{const config=JSON.parse(JSON.stringify(value)) as WorkflowConfig;validate(config);return freeze({version:config.version,hash:createHash('sha256').update(canonical(config)).digest('hex'),config});}
+function configuredDefaults():unknown{
+ const name=process.env.WORKFLOW_MODEL_PROFILE;if(!name)return defaults;
+ if(name!=='qwen3.7-flash')throw new Error('Unknown workflow model profile');
+ return {...defaults,version:flashProfile.version,llm:{...defaults.llm,...flashProfile.llm},schemas:flashProfile.schemas};
+}
+export function loadWorkflowConfig(value:unknown=configuredDefaults()):WorkflowConfigSnapshot{const config=JSON.parse(JSON.stringify(value)) as WorkflowConfig;validate(config);return freeze({version:config.version,hash:createHash('sha256').update(canonical(config)).digest('hex'),config});}
 export function validateWorkflowSnapshot(value:unknown):WorkflowConfigSnapshot{const input=value as WorkflowConfigSnapshot;const snapshot=loadWorkflowConfig(input?.config);if(snapshot.hash!==input.hash||snapshot.version!==input.version)throw new Error('Workflow snapshot hash/version mismatch');return snapshot;}
 const defaultSnapshot=loadWorkflowConfig();
 export function getWorkflowConfig():WorkflowConfig{return (context.getStore()?.snapshot||defaultSnapshot).config;}
