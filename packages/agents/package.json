@@ -17,7 +17,8 @@
   "dependencies": {
     "@class-reflect/observability": "workspace:*",
     "@class-reflect/providers": "workspace:*",
-    "@class-reflect/shared-types": "workspace:*"
+    "@class-reflect/shared-types": "workspace:*",
+    "@class-reflect/config": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

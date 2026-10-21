@@ -1,3 +1,4 @@
+import {getWorkflowConfig} from '@class-reflect/config';
 import type { LessonSection, TranscriptSegment } from "@class-reflect/shared-types";
 import {
   activityBoundary,
@@ -18,8 +19,8 @@ export function buildDisplayTranscriptSections(segments: TranscriptSegment[]): L
     const nextTextLength = currentTextLength + displayTextForSegment(segment).length;
     const gapMs = previous ? Math.max(segment.startMs - previous.endMs, 0) : 0;
     const shouldClose = current.length > 0 && (
-      nextTextLength > 500 ||
-      gapMs >= 15_000 ||
+      nextTextLength > getWorkflowConfig().sections.maxCharacters ||
+      gapMs >= getWorkflowConfig().sections.gapMs ||
       speakerTurnStartsNewBlock(previous, segment, currentTextLength) ||
       activityBoundary(previous.text, segment.text)
     );
@@ -45,7 +46,7 @@ function makeTranscriptSection(segments: TranscriptSegment[], index: number): Le
     endMs,
     title: inferTranscriptSectionTitle(segments, index),
     summaryText: text,
-    confidenceLabel: segments.some((segment) => (segment.confidence ?? 1) < 0.65) ? "含低置信句" : "机器整理",
+    confidenceLabel: segments.some((segment) => (segment.confidence ?? 1) < getWorkflowConfig().sections.lowConfidence) ? "含低置信句" : "机器整理",
     tags: inferTranscriptSectionTags(segments),
     transcriptSegmentIds: segments.map((segment) => segment.id)
   };

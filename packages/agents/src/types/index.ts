@@ -17,6 +17,7 @@ export type AgentResult<T> = {
 };
 
 export type TeachingEvidenceInput = {
+  auxiliaryCases?:string[];
   sceneLabelConfirmed?: boolean;
   sceneRevision?: number;
   lessonId: string;

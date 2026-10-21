@@ -368,3 +368,4 @@ export type { EvaluationContext, EvaluationScope, EvaluationScene } from './eval
 export { summarizeSceneMetricGuard } from './evaluation-scene';
 
 export {filterSceneMetrics, checkSceneMetric, sceneMetricId, allowedSceneIds} from './scene-metric-policy';
+export {WorkflowFailureError,classifyWorkflowFailure,routeWorkflowFailure,parseRetryAfter,type WorkflowFailure,type WorkflowFailureKind,type FailurePolicy,type FailureDecision} from './workflow-failure';

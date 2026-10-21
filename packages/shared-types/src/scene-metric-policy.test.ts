@@ -1,3 +1,4 @@
+import {loadWorkflowConfig,withWorkflowConfig} from '@class-reflect/config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildEvaluationContext} from './evaluation-scene';
@@ -19,3 +20,4 @@ test('unknown historical metrics and unversioned metrics fail closed',()=>{
  assert.equal(filterSceneMetrics(c,[{id:'f',name:'填充词次数',value:1}]).length,0);
  assert.equal(filterSceneMetrics(c,[{id:'f',name:'填充词次数',value:1,metadata:{evaluationContext:c}}]).length,1);
 });
+test('scene whitelist is selected from the pinned snapshot',async()=>{const config=JSON.parse(JSON.stringify(loadWorkflowConfig().config));config.sceneProfiles.scenes['simulated_demo:teaching_presentation'].allowed_metric_ids=[];const {allowedSceneIds}=await import('./scene-metric-policy');await withWorkflowConfig(loadWorkflowConfig(config),async()=>{assert.deepEqual(allowedSceneIds({sceneType:'simulated_demo',evaluationScope:'teaching_presentation'} as any,'metric'),[]);});});

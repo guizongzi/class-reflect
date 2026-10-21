@@ -1,3 +1,4 @@
+import {getWorkflowConfig} from '@class-reflect/config';
 import type { TranscriptSegment } from "@class-reflect/shared-types";
 
 export function scoreTeacherLikelihood(text: string) {
@@ -27,7 +28,7 @@ export function countDisplayCharacters(segments: TranscriptSegment[]) {
 
 export function speakerTurnStartsNewBlock(previous: TranscriptSegment, segment: TranscriptSegment, currentTextLength: number) {
   if ((previous.speakerLabel || "") === (segment.speakerLabel || "")) return false;
-  if (currentTextLength < 120) return false;
+  if (currentTextLength < getWorkflowConfig().sections.speakerTurnMinCharacters) return false;
   return isTeacherLikeSegment(previous) !== isTeacherLikeSegment(segment);
 }
 
@@ -42,8 +43,8 @@ export function inferTranscriptFlags(segment: TranscriptSegment) {
   if (/嗯|呃|额|那个|这个/.test(text)) flags.push("filler_words");
   if (/([一-龥]{1,4})[，,、]?\1/.test(text)) flags.push("repetition");
   if (/[？?]|为什么|怎么|什么|哪|几|是不是|对不对/.test(text)) flags.push("question");
-  if ((segment.confidence ?? 1) < 0.65) flags.push("low_confidence");
-  if ((segment.endMs - segment.startMs) > 20_000 && text.length < 8) flags.push("timing_uncertain");
+  if ((segment.confidence ?? 1) < getWorkflowConfig().sections.lowConfidence) flags.push("low_confidence");
+  if ((segment.endMs - segment.startMs) > getWorkflowConfig().sections.uncertainDurationMs && text.length < getWorkflowConfig().sections.uncertainTextCharacters) flags.push("timing_uncertain");
   return flags;
 }
 

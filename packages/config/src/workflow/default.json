@@ -1,0 +1,308 @@
+{
+  "version": "workflow.v1",
+  "steps": [
+    {
+      "key": "upload_video",
+      "handler": "upload_video",
+      "human": false
+    },
+    {
+      "key": "upload_audio",
+      "handler": "upload_audio",
+      "human": false
+    },
+    {
+      "key": "probe_media",
+      "handler": "probe_media",
+      "human": false
+    },
+    {
+      "key": "submit_asr",
+      "handler": "submit_asr",
+      "human": false
+    },
+    {
+      "key": "poll_asr",
+      "handler": "poll_asr",
+      "human": false
+    },
+    {
+      "key": "persist_transcript",
+      "handler": "persist_transcript",
+      "human": false
+    },
+    {
+      "key": "normalize_transcript",
+      "handler": "normalize_transcript",
+      "human": false
+    },
+    {
+      "key": "build_sections",
+      "handler": "build_sections",
+      "human": false
+    },
+    {
+      "key": "calculate_metrics",
+      "handler": "calculate_metrics",
+      "human": false
+    },
+    {
+      "key": "detect_events",
+      "handler": "detect_events",
+      "human": false
+    },
+    {
+      "key": "generate_evidence",
+      "handler": "generate_evidence",
+      "human": false
+    },
+    {
+      "key": "validate_evidence",
+      "handler": "validate_evidence",
+      "human": false
+    },
+    {
+      "key": "wait_human_review",
+      "handler": "wait_human_review",
+      "human": true
+    },
+    {
+      "key": "generate_report",
+      "handler": "generate_report",
+      "human": false
+    },
+    {
+      "key": "export_report",
+      "handler": "export_report",
+      "human": false
+    }
+  ],
+  "window": {
+    "size": 80,
+    "overlap": 3
+  },
+  "llm": {
+    "timeoutMs": 120000,
+    "temperature": 0.2,
+    "responseFormat": "json_object",
+    "strictSchemaModels": [],
+    "strictSchemaEndpoints": []
+  },
+  "failurePolicies": {
+    "schemaRetries": 1,
+    "providerRetries": 3,
+    "baseDelayMs": 1000,
+    "maxDelayMs": 60000,
+    "circuitThreshold": 3,
+    "circuitOpenMs": 30000
+  },
+  "metrics": {
+    "longPauseMs": 3000,
+    "teacherRunGapMs": 2500
+  },
+  "retrieval": {
+    "maxCases": 2,
+    "maxCharacters": 1800
+  },
+  "prompts": {
+    "normalizer": "\n只输出 Patch JSON。S=[mode,speaker,confidence,text]；i 为临时句 ID；mode=w 可写，c 仅上下文。\ntop=patches,warnings\np=i,correctedText?,speakerRole?,speakerIdentityId?,confidence,changeTypes,needsHumanReview,reviewReasonCode?\npatch 必含 confidence(0-1)、非空 changeTypes、needsHumanReview。\n未变且无需复核不返；需复核即使文本不变也返 patch，省略 correctedText。\ncorrectedText 必须实质变更；只改 speaker/只复核禁返 correctedText。\n输入无永久 speakerIdentityId；禁把 A/B/C 写入；禁逐句确认已有 speakerRole。\n教师句缺句末标点或称呼后缺逗号，返 punctuation patch。\n已有句末标点时，禁返原句 punctuation patch；correctedText 与输入 text 相同则删 patch。\n教师自我修正句如“不对、应该是”保留原话；没有 ASR 错误则不返回 patch。\n禁返真实ID、时间戳、rawText、全文、章节建议、metrics。\n学生错误答案不得纠正；学生答案/数字/公式/术语存疑只标复核。\nspeaker=C 代表 unknown/多人重叠，必须返 needsHumanReview=true patch，可含 speakerRole=\"unknown\"。\nCT=asr_correction|term_correction|punctuation|readability|speaker_role|speaker_identity|ambiguity|asr_fragment_merge|sentence_boundary_repair\nrole=teacher|student|students|multiple|unknown\nRR=low_confidence|speaker_conflict|term_conflict|student_answer|overlap|inaudible|boundary_uncertain|invalid_output\n例1 {\"patches\":[{\"i\":0,\"correctedText\":\"修正文本。\",\"confidence\":0.9,\"changeTypes\":[\"asr_correction\"],\"needsHumanReview\":false}],\"warnings\":[]}\n例2 {\"patches\":[{\"i\":1,\"confidence\":0.5,\"changeTypes\":[\"ambiguity\"],\"needsHumanReview\":true,\"reviewReasonCode\":\"low_confidence\"}],\"warnings\":[]}\n例3 学生答错只复核：{\"patches\":[{\"i\":2,\"confidence\":0.55,\"changeTypes\":[\"ambiguity\"],\"needsHumanReview\":true,\"reviewReasonCode\":\"student_answer\"}],\"warnings\":[]}\n例4 {\"patches\":[],\"warnings\":[]}\n",
+    "evidence": "\n你是课堂教学证据生成 Agent，只负责从输入片段中选择可回溯证据并解释其教学意义。\n\n输入字段：\n- scene_type/evaluation_scope/scene_cross_check 是系统确定的场景与分析范围，不得自行改写。teaching_presentation 下禁止任何双向师生互动指标；只能分析教学结构、解释、支架、例子、教学语言和总结等呈现。\n- 缺少学生语音不证明没有真实学生；场景冲突交人工复核。没有画面不得评价板书、课件或仪态，没有题本时长不得判断超时。\n\n- lessonId、lesson_format：原样复制到输出。\n- ap：分析范围。p=优先类别，x=禁用类别，pos/neg=正/负证据倾向，mp/mn=正/负证据数量上限。\n- t：[句子ID, 说话人, 文本, 置信度]。\n- f：[句子ID, 标签数组]，只包含少量语义提示标签：question、instruction、answer、feedback。语气词、重复、自我修正、停顿等规则可判断特征已由系统处理，不会传给你。\n- m/e/raw：可选指标、事件和原文补充。\n\n任务：\n1. 只生成 ap.p 或 generationConfig.enabledCategories 中的类别，绝不生成 ap.x。\n2. 同一类别可以有多条证据；不同片段、不同教学问题不要强行合并成一条。总数不得超过 generationConfig.maxEvidenceCards，正/负证据分别参考 ap.mp/ap.mn。\n3. 当同一类别在多个不相邻片段中反复出现，优先拆成多张卡；不要用一张卡概括整节课的同类问题。\n4. 单张卡尽量只绑定一个具体事件或一个连续小片段，transcriptSegmentIds 通常不超过 3 个；只有连续片段共同构成同一事件时才合并。\n5. 对 question_quality、feedback_quality、explanation_quality、cognitive_scaffolding、simulated_interaction_quality，如果存在多个独立问题，可各生成 2-4 条代表性证据。\n6. 不要为了覆盖更多类别而把同一类别只做一张总括卡；如果证据充足，同一高频类别的多张具体卡优先于低价值类别覆盖。\n7. 当 generationConfig.maxEvidenceCards >= 12 且负证据充足时，目标生成不少于 10 张证据卡，除非确实没有足够可回溯证据。\n8. sentiment=\"negative\" 只能用于 ap.neg 中的类别；不在 ap.neg 的类别不要生成负证据。\n9. 只做证据生成，不写教学建议，不判断不在输入中的事实。\n10. 规则可确定的等待时间、学生回应、技术问题、课堂管理、自测提示通常已由系统处理；不要绕到其他类别重复表达。\n11. quote 可为空或为简短摘录；证据定位必须主要依赖 transcriptSegmentIds。不得虚构不存在的句子 ID。\n12. 不输出 startMs/endMs，系统会按 transcriptSegmentIds 从数据库补齐时间。\n13. 输出简体中文，只返回 JSON，不要 Markdown 或解释文本。\n\n负证据边界：\n- 必须是可改善的具体教学行为，不做人格评价；不要因单句弱信号下结论；同一事件不要重复出卡，但同一类别下的不同事件可以分别出卡。\n- question_quality: 低阶连续提问/答案已含在问题中/只问是否不问理由/目标模糊/弱关联目标。\n- feedback_quality: 只说对很好/错后直接给答案/不解释错因/未对应学生回答/未修正reasoning。\n- follow_up: 不完整答案后结束/misconception后不追问/不同方法不比较/机械重复。\n- explanation_quality: 只给结论/跳步/术语未解释/解释与困难不匹配。\n- misconception_handling: 学生错本身不是教师负证据；必须是学生回应暴露错误→教师有处理机会→反应不充分。\n- cognitive_scaffolding: 困难后直接代答/任务过难但无中间支架/自测任务缺少目标或核对标准。\n- example_quality: 例子弱关联概念/单一机械例题/不能支持迁移/过复杂增加负荷。\n- simulated_interaction_quality: 模拟互动是否服务教学目标；机械问答/完美脚本/回答不影响教学可为负证据。\n- teaching_highlight: 是否突出重点难点；核心知识一带而过或全部平均用力可为负证据。\n- teacher_language: 评价表达准确、指令清楚、语言简洁和逻辑衔接；不要仅凭语速或口头禅下结论。\n- closure_quality: 判断结尾是否回扣重点、形成收束；只说“今天就到这里”通常不足。\n- teaching_evaluation: 判断是否体现过程性评价；不要和 feedback_quality 生成高度重复卡。\n- knowledge_accuracy: 缺少可靠依据时只能标记潜在知识风险，confidence 用 needs_review。\n- missed_opportunity 不作为 category，可写入 analysis.reasonTags。\n\n返回结构：\n{\n  \"lessonId\": \"string\",\n  \"lesson_format\": \"offline_classroom_recording | live_online_class | recorded_online_class | teacher_certification_interview | teacher_qualification_demo\",\n  \"instructionalContext\": \"new_instruction | exam_practice | review_lesson | test_paper_review | mixed | unknown\",\n  \"evidenceCards\": [\n    {\n      \"id\": \"string\",\n      \"category\": \"string\",\n      \"sentiment\": \"positive | neutral | negative\",\n      \"title\": \"string\",\n      \"fact\": \"string\",\n      \"interpretation\": \"string\",\n      \"quote\": \"string\",\n      \"transcriptSegmentIds\": [\"string\"],\n      \"metricIds\": [\"string\"],\n      \"classroomEventIds\": [\"string\"],\n      \"applicableLessonFormats\": [\"offline_classroom_recording | live_online_class | recorded_online_class | teacher_certification_interview | teacher_qualification_demo\"],\n      \"confidence\": \"low | medium | high | needs_review\",\n      \"uncertaintyNote\": \"string | null\",\n      \"reviewStatus\": \"pending_review\",\n      \"analysis\": {\n        \"evidenceCategory\": \"string\",\n        \"utteranceType\": \"string\",\n        \"includedInQuestionCount\": true,\n        \"includedInInteractionCount\": true,\n        \"evidenceStrength\": \"very_weak | weak | medium | strong | very_strong\",\n        \"internalReason\": \"string\",\n        \"reasonTags\": [\"missed_opportunity | low_level_question | generic_feedback | unhandled_misconception | reasoning_gap | weak_transfer | unclear_self_check | mechanical_interaction | teacher_monologue | scripted_student_response | performative_questioning | weak_feedback | weak_transition | weak_closure | overlong_introduction | unclear_objective | no_key_point | knowledge_risk | time_management | unclear_instruction | excessive_filler | direct_answer | weak_scaffolding\"]\n      },\n      \"teacherView\": {\n        \"title\": \"string\",\n        \"observation\": \"string\",\n        \"teachingMeaning\": \"string\"\n      },\n      \"learningCheck\": {\n        \"level\": 1,\n        \"checkType\": \"oral_confirmation | concept_restatement | specific_question | reason_explanation | transfer_or_task\",\n        \"responsePattern\": \"individual_student_response | choral_response | teacher_self_answer | multiple_student_overlap | no_audible_response | unknown_response\",\n        \"evidenceStrength\": \"very_weak | weak | medium | strong | very_strong\",\n        \"limitationNote\": \"string | null\"\n      }\n    }\n  ]\n}\n\n字段规则：\n- reviewStatus 固定为 \"pending_review\"。\n- metricIds/classroomEventIds 没有依据时返回 []。\n- learningCheck 只在学习检查相关证据中返回，否则省略。\n- analysis/teacherView 缺少可靠依据时可以省略。\n",
+    "sceneInstructions": {
+      "recorded_online_class": "课型规则：recorded_online_class 是录播网课。\n- 不得评价等待学生、互动机会、学生回应、实时反馈或课堂对话缺失。\n- 不得把没有真实学生回应、缺乏学生参与、教师自问自答作为负证据。\n- 可评价解释、结构、信息密度、方法概括、知识连接、复习结构、例子、自学检查质量。",
+      "teacher_certification_interview": "课型规则：teacher_certification_interview 是无真实学生的教资面试模拟试讲，不是官方评分。\n- 不得因为没有真实学生说话、回答、齐答、参与或真实互动生成负证据。\n- 教师模拟学生回答、复述虚拟学生观点或模拟课堂互动属于正常试讲行为，不得机械标记为 teacher_self_answer negative。\n- 本分支关闭互动、反馈和回应类指标，模拟互动台词不能当成实际双向交互事实。\n- 仅评价目标、结构、重点难点、解释、支架、例子、教学语言与结尾收束等教学呈现。\n- 知识性错误缺少可靠参考依据时只能作为 potential_knowledge_issue，confidence=needs_review。",
+      "live_online_class": "课型规则：live_online_class 是直播网课。\n- 可分析可听见的实时回应、连麦互动、技术确认和线上节奏。\n- 没有聊天区或平台数据时，不得判断聊天、投票、举手和在线参与。",
+      "offline_classroom_recording": "课型规则：offline_classroom_recording 是线下课堂录像。\n- 只基于可听见语音和已有事件/指标分析，不做画面注意力或仪态判断。\n- 可分析提问、等待、学生回应、齐答、反馈、追问、讲解和讲练节奏。"
+    },
+    "normalizerVersion": "transcript-agent.patch-index.v2",
+    "defaultSystem": "输出严格 JSON，不要 Markdown。",
+    "schemaContractLabel": "输出契约（JSON Schema）："
+  },
+  "schemas": {
+    "normalizer": {
+      "type": "object",
+      "required": [
+        "patches",
+        "warnings"
+      ],
+      "properties": {
+        "patches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "i",
+              "confidence",
+              "changeTypes",
+              "needsHumanReview"
+            ],
+            "properties": {
+              "i": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "changeTypes": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "needsHumanReview": {
+                "type": "boolean"
+              },
+              "correctedText": {
+                "type": "string"
+              },
+              "speakerRole": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "lessonId",
+        "evidenceCards"
+      ],
+      "properties": {
+        "evidenceCards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "category",
+              "sentiment",
+              "title",
+              "fact",
+              "interpretation",
+              "transcriptSegmentIds"
+            ],
+            "properties": {
+              "category": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "fact": {
+                "type": "string"
+              },
+              "interpretation": {
+                "type": "string"
+              },
+              "sentiment": {
+                "type": "string",
+                "enum": [
+                  "positive",
+                  "negative",
+                  "neutral"
+                ]
+              },
+              "transcriptSegmentIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "metricIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "classroomEventIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "applicableLessonFormats": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "analysis": {
+                "type": "object",
+                "properties": {
+                  "reasonTags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "includedInQuestionCount": {
+                    "type": "boolean"
+                  },
+                  "includedInInteractionCount": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "teacherView": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "observation": {
+                    "type": "string"
+                  },
+                  "teachingMeaning": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "skippedCategories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lessonId": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "public": {
+    "statuses": [
+      "pending",
+      "running",
+      "waiting_review",
+      "completed",
+      "failed"
+    ],
+    "maxDisplayCards": 50
+  },
+  "execution": {
+    "leaseMs": 120000,
+    "heartbeatMs": 30000,
+    "recoveryPollMs": 5000
+  },
+  "sections": {
+    "maxCharacters": 500,
+    "gapMs": 15000,
+    "speakerTurnMinCharacters": 120,
+    "lowConfidence": 0.65,
+    "uncertainDurationMs": 20000,
+    "uncertainTextCharacters": 8
+  }
+}

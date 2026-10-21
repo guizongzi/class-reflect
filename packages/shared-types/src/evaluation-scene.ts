@@ -1,4 +1,4 @@
-import scenePolicy from './scene-metric-bindings.json';
+import {getSceneProfiles} from '@class-reflect/config/browser';
 import {sceneCategoryAllowed, sceneMetricId, allowedSceneIds} from './scene-metric-policy';
 import type { ClassroomMetric, EvidenceCategory, LessonFormat, TranscriptSegment } from './index';
 export type EvaluationScene = 'real_classroom' | 'recorded_instruction' | 'simulated_demo' | 'unconfirmed';
@@ -9,7 +9,7 @@ export type EvaluationContext = {
   interactionEnabled: boolean; requiresReview: boolean; reviewReasons: string[];
   features: { teacherSegments: number; studentSegments: number; unknownSegments: number; teacherStudentPairs: number };
 };
-export const interactionEvidenceCategories = scenePolicy.interactionCategories as EvidenceCategory[];
+export const interactionEvidenceCategories = getSceneProfiles().interactionCategories as EvidenceCategory[];
 export function canonicalLessonFormat(value: unknown): LessonFormat | null {
   if(value==='teacher_qualification_demo')return 'teacher_certification_interview';
   return ['offline_classroom_recording','live_online_class','recorded_online_class','teacher_certification_interview'].includes(String(value)) ? value as LessonFormat : null;
@@ -61,8 +61,8 @@ export function isEvaluationContextCurrent(value:unknown,format:unknown,revision
 
 export function summarizeSceneMetricGuard(context:EvaluationContext,attempted:EvidenceCategory[],emitted:EvidenceCategory[]) {
   return {sceneType:context.sceneType,evaluationScope:context.evaluationScope,sceneRevision:context.sceneRevision,
-    interactionCandidateCount:attempted.filter(c=>interactionEvidenceCategories.includes(c)).length,
+    interactionCandidateCount:attempted.filter(c=>getSceneProfiles().interactionCategories.includes(c)).length,
     blockedInteractionCount:attempted.filter(c=>!isEvaluationCategoryAllowed(context,c)).length,
-    emittedInteractionCount:emitted.filter(c=>interactionEvidenceCategories.includes(c)).length,
+    emittedInteractionCount:emitted.filter(c=>getSceneProfiles().interactionCategories.includes(c)).length,
     violationCount:emitted.filter(c=>!isEvaluationCategoryAllowed(context,c)).length};
 }

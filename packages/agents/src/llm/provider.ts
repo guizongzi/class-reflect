@@ -1,3 +1,5 @@
+import { isStrictWorkflowExecution, getWorkflowConfig } from "@class-reflect/config";
+import { WorkflowFailureError } from "@class-reflect/shared-types";
 /// <reference types="node" />
 
 import { callAgent } from "../ai";
@@ -13,8 +15,9 @@ export async function tryRunLlmAgent<T>(input: {
   systemInstruction?: string;
   validate: (value: unknown) => value is T;
 }) {
-  if (!readAgentLlmConfig()) return null;
+  if (!readAgentLlmConfig()) { if(isStrictWorkflowExecution()) throw new WorkflowFailureError("configuration","LLM_CONFIG_MISSING","模型服务配置缺失"); return null; }
 
+  for(let attempt=0;;attempt++) {
   try {
     const result = await callAgent<T>({
       agentName: input.agentName,
@@ -30,17 +33,21 @@ export async function tryRunLlmAgent<T>(input: {
         payloadSummary: summarizePayload(input.payload),
         resultSummary: summarizeResult(result.parsedOutput)
       });
+      if(isStrictWorkflowExecution()) throw new WorkflowFailureError("schema_invalid","SCHEMA_INVALID","模型输出不符合结构要求");
       return null;
     }
 
     return result.output;
   } catch (error) {
+    if(isStrictWorkflowExecution() && error instanceof WorkflowFailureError && error.kind === "schema_invalid" && attempt < getWorkflowConfig().failurePolicies.schemaRetries) continue;
     logger.error("ai call threw", {
       promptVersion: input.promptVersion,
       agentName: input.agentName,
       payloadSummary: summarizePayload(input.payload),
       error: error instanceof Error ? error.message : String(error)
     });
+    if(isStrictWorkflowExecution()) throw error;
     return null;
+  }
   }
 }

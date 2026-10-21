@@ -16,6 +16,7 @@ export type TeachingEvidenceCompactPayload = {
   scene_type: EvaluationContext["sceneType"];
   evaluation_scope: EvaluationContext["evaluationScope"];
   scene_cross_check: EvaluationContext;
+  auxiliaryCases?:string[];
   lessonId: string;
   lesson_format: TeachingEvidenceInput["lesson_format"];
   ap: {
@@ -57,6 +58,7 @@ export function buildTeachingEvidenceLlmPayload(input: TeachingEvidenceInput): T
       mp: resolveSentimentLimit(profile.maxPositiveCards, maxEvidenceCards, 0.4),
       mn: resolveSentimentLimit(profile.maxNegativeCards, maxEvidenceCards, 0.7)
     },
+    auxiliaryCases:input.auxiliaryCases,
     sp: { T: "teacher", S: "student", G: "students", M: "multiple", U: "unknown" },
     t: input.transcriptSegments.map((segment) => compactTranscriptSegment(segment, sentenceIdMap)),
     f: input.transcriptSegments.flatMap((segment) => compactDeliveryFeatures(segment, sentenceIdMap)),

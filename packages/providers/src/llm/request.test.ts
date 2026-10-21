@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';import test from 'node:test';import {fetchLlmJson} from './request';
+test('provider 429 includes Retry-After and hides raw body',async()=>{const old=globalThis.fetch;globalThis.fetch=async()=>new Response('secret raw content',{status:429,headers:{'Retry-After':'2'}});try{await assert.rejects(()=>fetchLlmJson('https://test',{}),(e:any)=>e.kind==='provider_transient'&&e.meta.retryAfterMs===2000&&!e.message.includes('secret'));}finally{globalThis.fetch=old;}});
+test('provider timeout is bounded and permanent auth does not retry',async()=>{
+ const old=globalThis.fetch;const {withWorkflowConfig,loadWorkflowConfig}=await import('@class-reflect/config');const cfg=JSON.parse(JSON.stringify(loadWorkflowConfig().config));cfg.llm.timeoutMs=5;
+ globalThis.fetch=async(_url,init)=>new Promise((_resolve,reject)=>init?.signal?.addEventListener('abort',()=>reject(new Error('aborted'))));
+ try{await assert.rejects(()=>withWorkflowConfig(loadWorkflowConfig(cfg),()=>fetchLlmJson('https://test',{})),(e:any)=>e.kind==='provider_transient'&&e.code==='PROVIDER_TIMEOUT');globalThis.fetch=async()=>new Response('secret',{status:401});await assert.rejects(()=>fetchLlmJson('https://test',{}),(e:any)=>e.kind==='provider_permanent');}finally{globalThis.fetch=old;}
+});
+test('native schema requires both explicit model and endpoint capability',async()=>{
+ const {llmResponseFormat}=await import('./request');const {withWorkflowConfig,loadWorkflowConfig}=await import('@class-reflect/config');const cfg=JSON.parse(JSON.stringify(loadWorkflowConfig().config));cfg.llm.responseFormat='json_schema';cfg.llm.strictSchemaModels=['supported'];cfg.llm.strictSchemaEndpoints=['https://supported.test/v1'];const strict=(s:any)=>{if(s.type==='object'){s.additionalProperties=false;Object.values(s.properties||{}).forEach(strict);}if(s.type==='array')strict(s.items);};Object.values(cfg.schemas).forEach(strict);
+ withWorkflowConfig(loadWorkflowConfig(cfg),()=>{assert.throws(()=>llmResponseFormat(cfg.schemas.normalizer,'supported','https://different.test/v1'),(e:any)=>e.code==='STRICT_SCHEMA_UNSUPPORTED');assert.equal(llmResponseFormat(cfg.schemas.normalizer,'supported','https://supported.test/v1/').type,'json_schema');});
+});

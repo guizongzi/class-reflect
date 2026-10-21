@@ -1,3 +1,4 @@
+import {getTraceContext} from "@class-reflect/observability";
 /// <reference types="node" />
 
 import { appendFileSync, mkdirSync } from "node:fs";
@@ -25,6 +26,7 @@ export function emitAiAgentDebugLog(event: AiAgentDebugEvent, payload: Record<st
     scope: "ai-agent-debug",
     event,
     ...safePayload,
+    ...getTraceContext(),
     timestamp: new Date().toISOString()
   };
   const line = JSON.stringify(entry);

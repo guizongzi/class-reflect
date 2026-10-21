@@ -149,6 +149,9 @@ importers:
 
   packages/agents:
     dependencies:
+      '@class-reflect/config':
+        specifier: workspace:*
+        version: link:../config
       '@class-reflect/observability':
         specifier: workspace:*
         version: link:../observability
@@ -232,6 +235,9 @@ importers:
 
   packages/metrics:
     dependencies:
+      '@class-reflect/config':
+        specifier: workspace:*
+        version: link:../config
       '@class-reflect/shared-types':
         specifier: workspace:*
         version: link:../shared-types
@@ -254,6 +260,9 @@ importers:
 
   packages/providers:
     dependencies:
+      '@class-reflect/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
       '@aws-sdk/client-s3':
         specifier: ^3.744.0
         version: 3.1097.0
@@ -272,6 +281,10 @@ importers:
         version: 5.9.3
 
   packages/shared-types:
+    dependencies:
+      '@class-reflect/config':
+        specifier: workspace:*
+        version: link:../config
     devDependencies:
       typescript:
         specifier: ^5.7.3

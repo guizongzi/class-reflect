@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@class-reflect/shared-types": "workspace:*"
+    "@class-reflect/shared-types": "workspace:*",
+    "@class-reflect/config": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

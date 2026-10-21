@@ -1,3 +1,4 @@
+import {getWorkflowConfig} from '@class-reflect/config';
 import {checkSceneMetric, sceneMetricId, type EvaluationContext} from '@class-reflect/shared-types';
 import type { ClassroomMetric, LessonSection, TranscriptSegment } from "@class-reflect/shared-types";
 
@@ -8,8 +9,7 @@ type MetricInput = {
 
 type MetricDraft = Omit<ClassroomMetric, "id">;
 
-const longPauseMs = 3000;
-const teacherRunGapMs = 2500;
+
 
 export function calculateSpeechRate(segments: Array<{ startMs?: number; endMs?: number; text?: string }>) {
   const totalChars = segments.reduce((sum, segment) => sum + countEffectiveCharacters(segment.text || ""), 0);
@@ -20,6 +20,7 @@ export function calculateSpeechRate(segments: Array<{ startMs?: number; endMs?: 
 }
 
 function metricJobs(input: MetricInput): Array<{name:string;calculate:()=>MetricDraft}> {
+  const {longPauseMs,teacherRunGapMs}=getWorkflowConfig().metrics;
   const segments = [...input.transcriptSegments].sort((a, b) => a.startMs - b.startMs);
   const teacherSegments = segments.filter(isTeacherSegment);
   const studentSegments = segments.filter(isStudentSegment);
@@ -193,6 +194,7 @@ function findWaitAfterQuestion(question: TranscriptSegment, segments: Transcript
 }
 
 function findLongPauses(segments: TranscriptSegment[]) {
+  const {longPauseMs}=getWorkflowConfig().metrics;
   const pauses: Array<{ durationMs: number; segmentIds: string[]; afterMs: number; beforeMs: number }> = [];
   for (let index = 1; index < segments.length; index += 1) {
     const previous = segments[index - 1];
@@ -206,6 +208,7 @@ function findLongPauses(segments: TranscriptSegment[]) {
 }
 
 function findLongestTeacherRunMs(teacherSegments: TranscriptSegment[]) {
+  const {teacherRunGapMs}=getWorkflowConfig().metrics;
   let longest = 0;
   let currentStart: number | null = null;
   let currentEnd = 0;

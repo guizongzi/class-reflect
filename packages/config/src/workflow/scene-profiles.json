@@ -79,10 +79,7 @@
         "teacher_language",
         "closure_quality",
         "teaching_evaluation",
-        "knowledge_accuracy",
-        "medium",
-        "high",
-        "needs_review"
+        "knowledge_accuracy"
       ]
     },
     "real_classroom:teaching_presentation": {
@@ -116,10 +113,7 @@
         "teaching_highlight",
         "teacher_language",
         "closure_quality",
-        "knowledge_accuracy",
-        "medium",
-        "high",
-        "needs_review"
+        "knowledge_accuracy"
       ]
     },
     "recorded_instruction:real_interaction": {
@@ -153,10 +147,7 @@
         "teaching_highlight",
         "teacher_language",
         "closure_quality",
-        "knowledge_accuracy",
-        "medium",
-        "high",
-        "needs_review"
+        "knowledge_accuracy"
       ]
     },
     "recorded_instruction:teaching_presentation": {
@@ -190,10 +181,7 @@
         "teaching_highlight",
         "teacher_language",
         "closure_quality",
-        "knowledge_accuracy",
-        "medium",
-        "high",
-        "needs_review"
+        "knowledge_accuracy"
       ]
     },
     "simulated_demo:real_interaction": {
@@ -227,10 +215,7 @@
         "teaching_highlight",
         "teacher_language",
         "closure_quality",
-        "knowledge_accuracy",
-        "medium",
-        "high",
-        "needs_review"
+        "knowledge_accuracy"
       ]
     },
     "simulated_demo:teaching_presentation": {
@@ -264,10 +249,7 @@
         "teaching_highlight",
         "teacher_language",
         "closure_quality",
-        "knowledge_accuracy",
-        "medium",
-        "high",
-        "needs_review"
+        "knowledge_accuracy"
       ]
     },
     "unconfirmed:real_interaction": {
@@ -301,10 +283,7 @@
         "teaching_highlight",
         "teacher_language",
         "closure_quality",
-        "knowledge_accuracy",
-        "medium",
-        "high",
-        "needs_review"
+        "knowledge_accuracy"
       ]
     },
     "unconfirmed:teaching_presentation": {
@@ -338,11 +317,42 @@
         "teaching_highlight",
         "teacher_language",
         "closure_quality",
-        "knowledge_accuracy",
-        "medium",
-        "high",
-        "needs_review"
+        "knowledge_accuracy"
       ]
     }
-  }
+  },
+  "categoryCatalog": [
+    "lecture_duration",
+    "question_quality",
+    "wait_time",
+    "student_response",
+    "feedback_quality",
+    "follow_up",
+    "lesson_structure",
+    "practice_check",
+    "self_check",
+    "information_density",
+    "technical_issue",
+    "lesson_summary",
+    "response_pattern",
+    "learning_check_level",
+    "classroom_management",
+    "error_analysis",
+    "method_generalization",
+    "variation_practice",
+    "knowledge_connection",
+    "structured_review",
+    "weakness_detection",
+    "explanation_quality",
+    "misconception_handling",
+    "cognitive_scaffolding",
+    "example_quality",
+    "teaching_objective_alignment",
+    "simulated_interaction_quality",
+    "teaching_highlight",
+    "teacher_language",
+    "closure_quality",
+    "teaching_evaluation",
+    "knowledge_accuracy"
+  ]
 }

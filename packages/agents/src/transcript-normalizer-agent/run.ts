@@ -1,3 +1,4 @@
+import { getWorkflowConfig } from "@class-reflect/config";
 import type { TranscriptSegment } from "@class-reflect/shared-types";
 import { tryRunLlmAgent } from "../llm";
 import type { AgentResult, TranscriptNormalizerOutput } from "../types";
@@ -6,7 +7,7 @@ import { buildSpeakerProfiles, normalizeTranscriptSegment } from "./speaker-prof
 import { inferTranscriptFlags, isTeacherLikeSegment } from "./text-utils";
 import { applyTranscriptNormalizerPatches } from "./patch-apply";
 import { buildTranscriptNormalizerPatchInput, buildTranscriptNormalizerWindows } from "./patch-input";
-import { transcriptNormalizerPatchInstruction } from "./prompt";
+import { getTranscriptNormalizerInstruction } from "./prompt";
 import {
   transcriptNormalizerPatchPromptVersion,
   type TranscriptNormalizerIndexedPatchOutput,
@@ -29,9 +30,9 @@ export async function runTranscriptNormalizer(
     for (const window of windows) {
       const llmOutput = await tryRunLlmAgent<TranscriptNormalizerIndexedPatchOutput>({
         agentName: "transcript-normalizer-agent",
-        promptVersion: transcriptNormalizerPatchPromptVersion,
+        promptVersion: getWorkflowConfig().prompts.normalizerVersion,
         traceId: options?.traceId,
-        systemInstruction: transcriptNormalizerPatchInstruction,
+        systemInstruction: getTranscriptNormalizerInstruction(),
         payload: buildTranscriptNormalizerPatchInput(window),
         validate: (value): value is TranscriptNormalizerIndexedPatchOutput => (
           isTranscriptNormalizerIndexedPatchOutputForWindow(value, window)
@@ -60,7 +61,7 @@ export async function runTranscriptNormalizer(
           applyTranscriptNormalizerPatches(segments, mergedPatchOutput),
           mergedPatchOutput
         ),
-        promptVersion: transcriptNormalizerPatchPromptVersion,
+        promptVersion: getWorkflowConfig().prompts.normalizerVersion,
         warnings: mergedPatchOutput.warnings
       };
     }

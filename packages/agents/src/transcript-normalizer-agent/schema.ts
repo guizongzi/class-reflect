@@ -1,3 +1,4 @@
+import { getWorkflowConfig } from "@class-reflect/config";
 import type { TranscriptSegment } from "@class-reflect/shared-types";
 
 export type TranscriptNormalizerSpeakerRole = "teacher" | "student" | "students" | "multiple" | "unknown";
@@ -92,6 +93,6 @@ export type TranscriptNormalizerWindow = {
   contextSegments: TranscriptSegment[];
 };
 
-export const transcriptNormalizerPatchPromptVersion = "transcript-agent.patch-index.v2";
-export const transcriptNormalizerWindowSize = 80;
-export const transcriptNormalizerWindowOverlap = 3;
+export const transcriptNormalizerPatchPromptVersion = getWorkflowConfig().prompts.normalizerVersion;
+export const transcriptNormalizerWindowSize = getWorkflowConfig().window.size;
+export const transcriptNormalizerWindowOverlap = getWorkflowConfig().window.overlap;

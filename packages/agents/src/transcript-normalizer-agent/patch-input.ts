@@ -1,3 +1,4 @@
+import { getWorkflowConfig } from "@class-reflect/config";
 import type { TranscriptSegment } from "@class-reflect/shared-types";
 import {
   transcriptNormalizerWindowOverlap,
@@ -13,9 +14,9 @@ export function buildTranscriptNormalizerWindows(segments: TranscriptSegment[]):
   let writableStart = 0;
   let windowIndex = 0;
   while (writableStart < sorted.length) {
-    const writableEnd = Math.min(writableStart + transcriptNormalizerWindowSize, sorted.length);
-    const contextStart = Math.max(0, writableStart - transcriptNormalizerWindowOverlap);
-    const contextEnd = Math.min(sorted.length, writableEnd + transcriptNormalizerWindowOverlap);
+    const writableEnd = Math.min(writableStart + getWorkflowConfig().window.size, sorted.length);
+    const contextStart = Math.max(0, writableStart - getWorkflowConfig().window.overlap);
+    const contextEnd = Math.min(sorted.length, writableEnd + getWorkflowConfig().window.overlap);
     windows.push({
       windowId: `window-${windowIndex}`,
       writableSegments: sorted.slice(writableStart, writableEnd),

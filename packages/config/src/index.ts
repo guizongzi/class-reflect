@@ -85,3 +85,6 @@ export function loadAppConfig(): AppConfig {
     myMemoryEmail: process.env.MYMEMORY_EMAIL || raw.MYMEMORY_EMAIL || raw.translation?.myMemoryEmail
   });
 }
+
+export {loadWorkflowConfig,validateWorkflowSnapshot,getWorkflowConfig,withWorkflowConfig,isStrictWorkflowExecution,publicWorkflowConfig,type WorkflowConfig,type WorkflowConfigSnapshot} from './workflow-config';
+export {matchesWorkflowSchema} from './schema-validator';
