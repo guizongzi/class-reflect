@@ -1,0 +1,62 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "baseUrl": ".",
+    "rootDir": ".",
+    "noEmit": true,
+    "paths": {
+      "@class-reflect/metrics": [
+        "packages/metrics/src/index.ts"
+      ],
+      "@class-reflect/ui": [
+        "packages/ui/src/index.ts"
+      ],
+      "@class-reflect/database": [
+        "packages/database/src/index.ts"
+      ],
+      "@class-reflect/guardrails": [
+        "packages/guardrails/src/index.ts"
+      ],
+      "@class-reflect/shared-types": [
+        "packages/shared-types/src/index.ts"
+      ],
+      "@class-reflect/config": [
+        "packages/config/src/index.ts"
+      ],
+      "@class-reflect/providers": [
+        "packages/providers/src/index.ts"
+      ],
+      "@class-reflect/agents": [
+        "packages/agents/src/index.ts"
+      ],
+      "@class-reflect/observability": [
+        "packages/observability/src/index.ts"
+      ],
+      "@class-reflect/prompts": [
+        "packages/prompts/src/index.ts"
+      ],
+      "@class-reflect/domain": [
+        "packages/domain/src/index.ts"
+      ],
+      "@class-reflect/api-contracts": [
+        "packages/api-contracts/src/index.ts"
+      ],
+      "@class-reflect/config/browser": [
+        "packages/config/src/browser.ts"
+      ]
+    },
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "jsx": "preserve"
+  },
+  "include": [
+    "packages/**/*.ts",
+    "apps/api/src/**/*.ts",
+    "apps/worker/src/**/*.ts",
+    "apps/web/src/**/*.ts",
+    "apps/web/src/**/*.tsx",
+    "validation/workflow-foundation/**/*.ts"
+  ]
+}

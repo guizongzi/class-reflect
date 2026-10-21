@@ -11,7 +11,12 @@
     "api:dev": "pnpm --filter @class-reflect/api dev",
     "web:dev": "pnpm --filter @class-reflect/web dev",
     "worker:dev": "pnpm --filter @class-reflect/worker dev",
-    "worker:once": "pnpm --filter @class-reflect/worker start -- --once"
+    "worker:once": "pnpm --filter @class-reflect/worker start -- --once",
+    "test:source": "node scripts/test-source.cjs",
+    "workflow:real": "node --require ./scripts/register-source.cjs validation/workflow-foundation/real-acceptance.ts",
+    "fewshot:refresh": "node --require ./scripts/register-source.cjs packages/database/scripts/refresh-few-shot.ts",
+    "regression:freeze": "node --require ./scripts/register-source.cjs packages/database/scripts/freeze-regression-set.ts",
+    "check:source": "tsc -p tsconfig.source-check.json"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

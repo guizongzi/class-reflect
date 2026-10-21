@@ -15,7 +15,7 @@
 
 ## 统一指标策略与动态变更
 
-配置入口：`packages/shared-types/src/scene-metric-bindings.json`，按 `sceneType:evaluationScope` 绑定 `allowed_metric_ids` 与 `allowed_category_ids`。未知指标默认拒绝；历史中文指标通过配置映射为稳定 ID，缺场景快照的旧结果需要重新生成。
+配置入口：`packages/config/src/workflow/default.json（sceneProfiles）`，按 `sceneType:evaluationScope` 绑定 `allowed_metric_ids` 与 `allowed_category_ids`。未知指标默认拒绝；历史中文指标通过配置映射为稳定 ID，缺场景快照的旧结果需要重新生成。
 
 统一过滤函数 `filterSceneMetrics` 用于数据库读取、保存、Evidence 输入和报告；单条计算经 `checkSceneMetric` 执行前检查。生产 Worker 使用 `calculateScopedClassroomMetrics`，每项重新读取场景版本；不保存内存白名单缓存。场景或有效角色变化后递增 scene_revision，下一轮重算策略；自动角色变更尊重人工角色覆盖。替换转录同样递增版本。执行期间变化则拒绝旧任务保存，不能给旧结果补贴新版本。
 
